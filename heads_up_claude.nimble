@@ -21,13 +21,17 @@ task install, "Install the program to ~/.local/bin":
     exec "if not exist \"%LOCALAPPDATA%\\Programs\" mkdir \"%LOCALAPPDATA%\\Programs\""
     exec "copy bin\\heads-up-claude.exe \"%LOCALAPPDATA%\\Programs\\heads-up-claude.exe\""
     echo "✓ Installed to %LOCALAPPDATA%\\Programs\\heads-up-claude.exe"
-    exec "%LOCALAPPDATA%\\Programs\\heads-up-claude.exe --install"
+    echo ""
+    echo "Next step: Run the interactive installer to configure Claude Code:"
+    echo "  heads-up-claude --install"
   else:
     exec "mkdir -p ~/.local/bin"
     exec "cp bin/heads-up-claude ~/.local/bin/heads-up-claude"
     exec "chmod +x ~/.local/bin/heads-up-claude"
     echo "✓ Installed to ~/.local/bin/heads-up-claude"
-    exec "~/.local/bin/heads-up-claude --install"
+    echo ""
+    echo "Next step: Run the interactive installer to configure Claude Code:"
+    echo "  ~/.local/bin/heads-up-claude --install"
 
 task build, "Build release binary":
   exec "nim c -d:release -o:bin/heads_up_claude src/heads_up_claude.nim"

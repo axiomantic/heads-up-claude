@@ -15,18 +15,37 @@ A custom statusline for Claude Code that displays real-time token usage, rate li
 
 ## Installation
 
+### Step 1: Install the Binary
+
 ```bash
 git clone https://github.com/axiomantic/heads-up-claude.git
 cd heads-up-claude
 nimble install
 ```
 
-This will:
-1. Build the release binary
-2. Install to `~/.local/bin/heads-up-claude` (or `%LOCALAPPDATA%\Programs` on Windows)
-3. Run the interactive installer to configure your Claude Code settings with the full path
+This installs the binary to:
+- **Unix/Linux/macOS**: `~/.local/bin/heads-up-claude`
+- **Windows**: `%LOCALAPPDATA%\Programs\heads-up-claude.exe`
 
-No need to add anything to your PATH - the full path is automatically configured in your settings.
+### Step 2: Configure Claude Code
+
+Run the interactive installer:
+
+```bash
+# Unix/Linux/macOS
+~/.local/bin/heads-up-claude --install
+
+# Windows
+heads-up-claude --install
+```
+
+The installer will:
+1. Auto-detect your Claude plan from usage history
+2. Prompt for your weekly reset time
+3. Ask for display style preference (emoji or text)
+4. Update your `~/.claude/settings.json` with the full binary path
+
+No need to add anything to your PATH - the full path is automatically configured.
 
 ## Understanding the Statusline
 
