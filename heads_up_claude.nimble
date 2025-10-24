@@ -18,7 +18,7 @@ requires "nim >= 2.0.0"
 task install, "Install the program to ~/.claude/heads-up-claude":
   exec "nim c -d:release -o:bin/heads-up-claude src/heads_up_claude.nim"
   exec "mkdir -p ~/.claude"
-  exec "cp bin/heads_up_claude ~/.claude/heads-up-claude"
+  exec "cp bin/heads-up-claude ~/.claude/heads-up-claude"
   echo "✓ Installed to ~/.claude/heads-up-claude"
   exec "~/.claude/heads-up-claude --install"
 
