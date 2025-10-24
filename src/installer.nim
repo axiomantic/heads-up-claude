@@ -161,7 +161,11 @@ proc promptPlanSelection*(detectedPlan: PlanType): PlanType =
 
 proc installStatusLine*(selectedPlan: PlanType, resetTime: DateTime, useEmoji: bool) =
   let settingsPath = getEnv("HOME") / ".claude" / "settings.json"
-  let binPath = getEnv("HOME") / ".claude" / "heads-up-claude"
+
+  when defined(windows):
+    let binPath = getEnv("LOCALAPPDATA") / "Programs" / "heads-up-claude.exe"
+  else:
+    let binPath = getEnv("HOME") / ".local" / "bin" / "heads-up-claude"
 
   var settings: JsonNode
   if fileExists(settingsPath):
@@ -199,7 +203,10 @@ proc installStatusLine*(selectedPlan: PlanType, resetTime: DateTime, useEmoji: b
   echo "Restart Claude Code to see the new statusline!"
   echo ""
   echo "To change your plan or reset time later, run:"
-  echo "  ~/.claude/heads-up-claude --install"
+  when defined(windows):
+    echo "  heads-up-claude --install"
+  else:
+    echo "  ~/.local/bin/heads-up-claude --install"
 
 proc showHelp*() =
   echo "Heads Up Claude"
@@ -220,10 +227,16 @@ proc showHelp*() =
   echo ""
   echo "Examples:"
   echo "  # Run installer"
-  echo "  ~/.claude/heads-up-claude --install"
+  when defined(windows):
+    echo "  heads-up-claude --install"
+  else:
+    echo "  ~/.local/bin/heads-up-claude --install"
   echo ""
   echo "  # Use in settings.json with custom options"
-  echo "  ~/.claude/heads-up-claude --plan=max20 --reset-time=\"2025-10-30T23:00:00+00:00\" --no-emoji"
+  when defined(windows):
+    echo "  heads-up-claude --plan=max20 --reset-time=\"2025-10-30T23:00:00+00:00\" --no-emoji"
+  else:
+    echo "  ~/.local/bin/heads-up-claude --plan=max20 --reset-time=\"2025-10-30T23:00:00+00:00\" --no-emoji"
   echo ""
   echo "For more information, see https://github.com/axiomantic/heads-up-claude"
 

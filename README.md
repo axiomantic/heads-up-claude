@@ -21,7 +21,12 @@ cd heads-up-claude
 nimble install
 ```
 
-The installer will help you configure your `~/.claude/settings.json` with the appropriate plan, reset time, and display style.
+This will:
+1. Build the release binary
+2. Install to `~/.local/bin/heads-up-claude` (or `%LOCALAPPDATA%\Programs` on Windows)
+3. Run the interactive installer to configure your Claude Code settings with the full path
+
+No need to add anything to your PATH - the full path is automatically configured in your settings.
 
 ## Understanding the Statusline
 
@@ -99,10 +104,12 @@ Edit `~/.claude/settings.json`:
 {
   "statusLine": {
     "type": "command",
-    "command": "~/.claude/heads-up-claude --plan=max20 --reset-time=\"2025-10-30T23:00:00+00:00\""
+    "command": "~/.local/bin/heads-up-claude --plan=max20 --reset-time=\"2025-10-30T23:00:00+00:00\""
   }
 }
 ```
+
+**Windows users**: Use the full path like `C:\Users\YourName\AppData\Local\Programs\heads-up-claude.exe`
 
 Find your reset time at https://claude.ai/settings/usage
 

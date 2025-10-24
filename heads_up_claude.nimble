@@ -15,12 +15,19 @@ requires "nim >= 2.0.0"
 
 # Tasks
 
-task install, "Install the program to ~/.claude/heads-up-claude":
+task install, "Install the program to ~/.local/bin":
   exec "nim c -d:release -o:bin/heads-up-claude src/heads_up_claude.nim"
-  exec "mkdir -p ~/.claude"
-  exec "cp bin/heads-up-claude ~/.claude/heads-up-claude"
-  echo "✓ Installed to ~/.claude/heads-up-claude"
-  exec "~/.claude/heads-up-claude --install"
+  when defined(windows):
+    exec "if not exist \"%LOCALAPPDATA%\\Programs\" mkdir \"%LOCALAPPDATA%\\Programs\""
+    exec "copy bin\\heads-up-claude.exe \"%LOCALAPPDATA%\\Programs\\heads-up-claude.exe\""
+    echo "✓ Installed to %LOCALAPPDATA%\\Programs\\heads-up-claude.exe"
+    exec "%LOCALAPPDATA%\\Programs\\heads-up-claude.exe --install"
+  else:
+    exec "mkdir -p ~/.local/bin"
+    exec "cp bin/heads-up-claude ~/.local/bin/heads-up-claude"
+    exec "chmod +x ~/.local/bin/heads-up-claude"
+    echo "✓ Installed to ~/.local/bin/heads-up-claude"
+    exec "~/.local/bin/heads-up-claude --install"
 
 task build, "Build release binary":
   exec "nim c -d:release -o:bin/heads_up_claude src/heads_up_claude.nim"
