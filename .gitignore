@@ -1,6 +1,5 @@
 # Nim compiler artifacts
-heads-up-claude
-statusline
+bin/
 nimcache/
 *.o
 *.so

@@ -15,20 +15,24 @@ A custom statusline for Claude Code that shows real-time token usage, rate limit
 
 ### Installation
 
-1. Build from source:
+Using Nimble:
 ```bash
 git clone https://github.com/axiomantic/heads-up-claude.git
 cd heads-up-claude
-nim c -d:release heads-up-claude.nim
-cp heads-up-claude ~/.claude/statusline
-```
-
-2. Run the interactive installer:
-```bash
+nimble install
 ~/.claude/statusline --install
 ```
 
-This will configure your `~/.claude/settings.json` with the appropriate plan, reset time, and display style.
+Or manually:
+```bash
+git clone https://github.com/axiomantic/heads-up-claude.git
+cd heads-up-claude
+nim c -d:release -o:bin/heads_up_claude src/heads_up_claude.nim
+cp bin/heads_up_claude ~/.claude/statusline
+~/.claude/statusline --install
+```
+
+The installer will configure your `~/.claude/settings.json` with the appropriate plan, reset time, and display style.
 
 ### Help
 
@@ -41,18 +45,31 @@ This will configure your `~/.claude/settings.json` with the appropriate plan, re
 ### Building from Source
 
 ```bash
-git clone https://github.com/axiomantic/heads-up-claude.git
-cd heads-up-claude
-nim c heads-up-claude.nim
-cp heads-up-claude ~/.claude/statusline
+# Using Nimble (recommended)
+nimble build
+
+# Or manually
+nim c -d:release -o:bin/heads_up_claude src/heads_up_claude.nim
 ```
 
 ### Project Structure
 
-- **Source**: `heads-up-claude.nim` - Main source file
-- **Config**: `nim.cfg` - Compiler configuration
-- **Binary**: `~/.claude/statusline` (installed)
-- **Cache**: `~/.cache/claude-statusline/file-cache.json`
+```
+heads-up-claude/
+├── src/
+│   ├── heads_up_claude.nim    # Main source file
+│   └── nim.cfg                # Compiler configuration
+├── bin/                       # Compiled binaries (gitignored)
+├── heads_up_claude.nimble     # Nimble package definition
+├── README.md
+├── LICENSE
+└── .gitignore
+```
+
+**Installed Files:**
+- `~/.claude/statusline` - Compiled binary
+- `~/.claude/settings.json` - Claude settings (configured by installer)
+- `~/.cache/claude-statusline/file-cache.json` - Token/usage cache
 
 ## Current Status
 
@@ -253,28 +270,30 @@ cat /tmp/statusline-input.json | ~/.claude/statusline --plan=max20x
 ### 4. Restart Claude Code
 After installation, restart Claude Code to see the new statusline in action.
 
-## Important Files
+## Nimble Commands
 
-### Source Files
-- `heads-up-claude.nim` - Main source code
-- `nim.cfg` - Compiler configuration
-- `README.md` - This documentation
+```bash
+# Install to ~/.claude/statusline
+nimble install
 
-### Installed Files
-- `~/.claude/statusline` - Compiled binary (installed)
-- `~/.claude/settings.json` - Claude settings (configured by installer)
-- `~/.cache/claude-statusline/file-cache.json` - Token/usage cache
+# Build release binary to bin/
+nimble build
 
-### Data Files
-- `~/.claude/projects/*/session-*.jsonl` - Session transcripts
+# Build debug binary
+nimble dev
 
-### Build Commands
+# Run tests (if available)
+nimble test
+```
+
+## Manual Commands
+
 ```bash
 # Compile from source
-nim c heads-up-claude.nim
+nim c -d:release -o:bin/heads_up_claude src/heads_up_claude.nim
 
 # Install compiled binary
-cp heads-up-claude ~/.claude/statusline
+cp bin/heads_up_claude ~/.claude/statusline
 
 # Run interactive installer
 ~/.claude/statusline --install

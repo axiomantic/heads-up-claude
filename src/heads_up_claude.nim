@@ -1,30 +1,29 @@
-# Recompile with:
-#   cd ~/.claude && nim c statusline.nim
-#
-# Input JSON format (from stdin):
-# {
-#   "session_id": "a2ada66d-94d4-4a1a-82a3-e1aae6a0c868",
-#   "transcript_path": "/Users/user/.claude/projects/-Users-user-Development-project/session-id.jsonl",
-#   "cwd": "/Users/user/.claude",  # Where the statusline script runs from
-#   "model": {
-#     "id": "claude-sonnet-4-5-20250929",
-#     "display_name": "Sonnet 4.5"
-#   },
-#   "workspace": {
-#     "current_dir": "/Users/user/.claude",  # Where the script runs
-#     "project_dir": "/Users/user/Development/project"  # Actual project directory
-#   },
-#   "version": "2.0.25",
-#   "output_style": {"name": "default"},
-#   "cost": {
-#     "total_cost_usd": 2.05,
-#     "total_duration_ms": 2611417,
-#     "total_api_duration_ms": 559530,
-#     "total_lines_added": 294,
-#     "total_lines_removed": 124
-#   },
-#   "exceeds_200k_tokens": false
-# }
+#[
+Example input JSON format (from stdin):
+{
+  "session_id": "a2ada66d-94d4-4a1a-82a3-e1aae6a0c868",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-Development-project/session-id.jsonl",
+  "cwd": "/Users/user/.claude",  # Where the statusline script runs from
+  "model": {
+    "id": "claude-sonnet-4-5-20250929",
+    "display_name": "Sonnet 4.5"
+  },
+  "workspace": {
+    "current_dir": "/Users/user/.claude",  # Where the script runs
+    "project_dir": "/Users/user/Development/project"  # Actual project directory
+  },
+  "version": "2.0.25",
+  "output_style": {"name": "default"},
+  "cost": {
+    "total_cost_usd": 2.05,
+    "total_duration_ms": 2611417,
+    "total_api_duration_ms": 559530,
+    "total_lines_added": 294,
+    "total_lines_removed": 124
+  },
+  "exceeds_200k_tokens": false
+}
+]#
 
 import std/[json, os, strutils, osproc, terminal, times, streams, options, tables, md5, parseopt]
 
