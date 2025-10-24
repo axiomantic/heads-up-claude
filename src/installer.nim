@@ -245,6 +245,28 @@ proc runInstall*(projectsDir: string) =
   echo "========================="
   echo ""
 
+  let settingsPath = getEnv("HOME") / ".claude" / "settings.json"
+
+  if fileExists(settingsPath):
+    try:
+      let settings = parseJson(readFile(settingsPath))
+      if settings.hasKey("statusLine") and settings["statusLine"].hasKey("command"):
+        let currentCommand = settings["statusLine"]["command"].getStr()
+        if "heads-up-claude" in currentCommand:
+          echo "Existing configuration found:"
+          echo "  ", currentCommand
+          echo ""
+          stdout.write("Reconfigure? This will update your settings. [y/N]: ")
+          stdout.flushFile()
+
+          let response = stdin.readLine().strip().toLowerAscii()
+          if response.len == 0 or response[0] != 'y':
+            echo "Installation cancelled."
+            return
+          echo ""
+    except:
+      discard
+
   let detected = detectPlan(projectsDir)
 
   let selected = promptPlanSelection(detected)
