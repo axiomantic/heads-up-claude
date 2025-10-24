@@ -29,3 +29,6 @@ task build, "Build release binary":
 task dev, "Build debug binary":
   exec "nim c -o:bin/heads_up_claude src/heads_up_claude.nim"
   echo "✓ Built bin/heads_up_claude (debug)"
+
+task test, "Run test suite":
+  exec "nim c -r tests/test_all.nim"

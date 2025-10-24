@@ -161,7 +161,7 @@ proc promptPlanSelection*(detectedPlan: PlanType): PlanType =
 
 proc installStatusLine*(selectedPlan: PlanType, resetTime: DateTime, useEmoji: bool) =
   let settingsPath = getEnv("HOME") / ".claude" / "settings.json"
-  let statuslinePath = getEnv("HOME") / ".claude" / "heads-up-claude"
+  let binPath = getEnv("HOME") / ".claude" / "heads-up-claude"
 
   var settings: JsonNode
   if fileExists(settingsPath):
@@ -179,7 +179,7 @@ proc installStatusLine*(selectedPlan: PlanType, resetTime: DateTime, useEmoji: b
 
   let resetISO = format(resetTime, "yyyy-MM-dd'T'HH:mm:sszzz")
 
-  var command = statuslinePath & " --plan=" & planArg & " --reset-time=\"" & resetISO & "\""
+  var command = binPath & " --plan=" & planArg & " --reset-time=\"" & resetISO & "\""
   if not useEmoji:
     command.add(" --no-emoji")
 

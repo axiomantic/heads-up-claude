@@ -29,6 +29,7 @@ The statusline displays several key metrics to help you manage your Claude Code 
 
 ```
 ~/Development/project | feature-branch | Max 20 | Sonnet 4.5 | 💬 104.6K 65% 🟢 104.0K cached | 🕐 178/900 19% (3h22m) | 📅 19.3h/240h 8% (5d23h)
+<directory>          | <branch>        | <plan> | <model>    | <session tokens used>           | <5-hour messages used> | <weekly hours usage (approx)>
 ```
 
 ### Components
