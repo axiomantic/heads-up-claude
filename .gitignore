@@ -1,0 +1,22 @@
+# Nim compiler artifacts
+heads-up-claude
+statusline
+nimcache/
+*.o
+*.so
+*.dylib
+*.dll
+
+# macOS
+.DS_Store
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Test files
+/tmp/
+*.log
