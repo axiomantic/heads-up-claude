@@ -1,6 +1,6 @@
 # Heads Up Claude
 
-A custom statusline for Claude Code that displays real-time token usage, rate limits, and weekly usage metrics.
+A statusline for Claude Code showing real-time token usage, rate limits, and weekly metrics.
 
 ![Screenshot](docs/screenshot.png)
 
@@ -15,37 +15,37 @@ A custom statusline for Claude Code that displays real-time token usage, rate li
 
 ## Installation
 
-### Step 1: Install the Binary
+### Quick Install (Recommended)
+
+```bash
+git clone https://github.com/axiomantic/heads-up-claude.git
+cd heads-up-claude
+bash install.sh
+```
+
+The install script will:
+1. Check if Nim is installed (and offer to install it if not)
+2. Build the binary and install it to `~/.local/bin/heads-up-claude`
+3. Launch the interactive TUI installer to configure Claude Code
+
+The TUI installer will guide you through:
+- Auto-detecting your Claude plan from usage history
+- Setting your weekly reset time
+- Choosing display style (emoji or text)
+- Automatically updating `~/.claude/settings.json`
+
+### Manual Installation
+
+If you prefer to install manually or already have Nim installed:
 
 ```bash
 git clone https://github.com/axiomantic/heads-up-claude.git
 cd heads-up-claude
 nimble install
-```
-
-This installs the binary to:
-- **Unix/Linux/macOS**: `~/.local/bin/heads-up-claude`
-- **Windows**: `%LOCALAPPDATA%\Programs\heads-up-claude.exe`
-
-### Step 2: Configure Claude Code
-
-Run the interactive installer:
-
-```bash
-# Unix/Linux/macOS
 ~/.local/bin/heads-up-claude --install
-
-# Windows
-heads-up-claude --install
 ```
 
-The installer will:
-1. Auto-detect your Claude plan from usage history
-2. Prompt for your weekly reset time
-3. Ask for display style preference (emoji or text)
-4. Update your `~/.claude/settings.json` with the full binary path
-
-No need to add anything to your PATH - the full path is automatically configured.
+**Note**: Nim 2.0.0 or higher is required. Visit https://nim-lang.org/install.html for installation instructions.
 
 ## Understanding the Statusline
 
@@ -151,9 +151,11 @@ heads-up-claude/
 │   ├── cache.nim              # File caching system
 │   ├── usage.nim              # Usage calculation
 │   ├── display.nim            # Statusline formatting
-│   ├── installer.nim          # Interactive installer
+│   ├── installer.nim          # Installer functions
+│   ├── installer_tui.nim      # TUI installer interface
 │   └── nim.cfg                # Compiler config
 ├── bin/                       # Build output (gitignored)
+├── install.sh                 # Quick install script
 ├── heads_up_claude.nimble     # Package definition
 ├── README.md
 ├── CHANGELOG.md

@@ -2,7 +2,7 @@
 
 version       = "0.1.0"
 author        = "Axiomantic"
-description   = "A custom statusline for Claude Code that shows real-time token usage, rate limits, and weekly usage metrics"
+description   = "A statusline for Claude Code showing real-time token usage, rate limits, and weekly metrics"
 license       = "MIT"
 srcDir        = "src"
 bin           = @["heads_up_claude"]

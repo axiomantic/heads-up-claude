@@ -1,6 +1,6 @@
 import unittest
 import std/[options, strutils]
-import ../src/installer
+import ../src/installer_tui
 
 suite "Installer Module":
   test "parseResetTime parses Wed 5:59 PM":

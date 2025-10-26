@@ -2,7 +2,7 @@ import std/[strutils, times, options, os]
 import illwill
 import types
 
-proc parseResetTime(input: string): Option[(int, int)] =
+proc parseResetTime*(input: string): Option[(int, int)] =
   let normalized = input.toLowerAscii().strip()
 
   var weekday = -1
@@ -57,7 +57,7 @@ proc parseResetTime(input: string): Option[(int, int)] =
 
   return some((weekday, hourUTC))
 
-proc formatResetTime(weekday: int, hourUTC: int): string =
+proc formatResetTime*(weekday: int, hourUTC: int): string =
   let days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
   let dayName = days[weekday]
 

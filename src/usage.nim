@@ -1,4 +1,4 @@
-import std/[json, os, times, streams, options, tables, strutils]
+import std/[json, os, times, streams, options, tables]
 import types, cache
 
 proc getFirstTimestampAndContextTokens*(transcriptPath: string): (Option[DateTime], Option[DateTime], int, int, int, int) =
