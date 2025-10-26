@@ -35,3 +35,44 @@ suite "Display Module":
   test "getGitBranch handles errors gracefully":
     let branch = getGitBranch("/nonexistent/directory")
     check branch == ""
+
+suite "Color Name Conversion":
+  test "colorNameToAnsi converts basic colors":
+    check colorNameToAnsi("black") == "\x1b[30m"
+    check colorNameToAnsi("red") == "\x1b[31m"
+    check colorNameToAnsi("green") == "\x1b[32m"
+    check colorNameToAnsi("yellow") == "\x1b[33m"
+    check colorNameToAnsi("blue") == "\x1b[34m"
+    check colorNameToAnsi("magenta") == "\x1b[35m"
+    check colorNameToAnsi("cyan") == "\x1b[36m"
+    check colorNameToAnsi("white") == "\x1b[37m"
+
+  test "colorNameToAnsi converts bright colors":
+    check colorNameToAnsi("gray") == "\x1b[90m"
+    check colorNameToAnsi("bright-red") == "\x1b[91m"
+    check colorNameToAnsi("bright-green") == "\x1b[92m"
+    check colorNameToAnsi("bright-yellow") == "\x1b[93m"
+    check colorNameToAnsi("bright-blue") == "\x1b[94m"
+    check colorNameToAnsi("bright-magenta") == "\x1b[95m"
+    check colorNameToAnsi("bright-cyan") == "\x1b[96m"
+    check colorNameToAnsi("bright-white") == "\x1b[97m"
+
+  test "colorNameToAnsi handles aliases":
+    check colorNameToAnsi("purple") == "\x1b[35m"
+    check colorNameToAnsi("grey") == "\x1b[90m"
+    check colorNameToAnsi("brightred") == "\x1b[91m"
+    check colorNameToAnsi("bright-purple") == "\x1b[95m"
+
+  test "colorNameToAnsi is case insensitive":
+    check colorNameToAnsi("RED") == "\x1b[31m"
+    check colorNameToAnsi("Green") == "\x1b[32m"
+    check colorNameToAnsi("BRIGHT-BLUE") == "\x1b[94m"
+
+  test "colorNameToAnsi handles whitespace":
+    check colorNameToAnsi("  red  ") == "\x1b[31m"
+    check colorNameToAnsi(" green ") == "\x1b[32m"
+
+  test "colorNameToAnsi returns empty string for invalid color":
+    check colorNameToAnsi("invalid") == ""
+    check colorNameToAnsi("notacolor") == ""
+    check colorNameToAnsi("") == ""

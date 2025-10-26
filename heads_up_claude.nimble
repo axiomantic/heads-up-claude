@@ -12,11 +12,12 @@ binDir        = "bin"
 # Dependencies
 
 requires "nim >= 2.0.0"
+requires "illwill >= 0.3.0"
 
 # Tasks
 
 task install, "Install the program to ~/.local/bin":
-  exec "nim c -d:release -o:bin/heads-up-claude src/heads_up_claude.nim"
+  exec "nim c -d:release --hints:off --warnings:off -o:bin/heads-up-claude src/heads_up_claude.nim"
   when defined(windows):
     exec "if not exist \"%LOCALAPPDATA%\\Programs\" mkdir \"%LOCALAPPDATA%\\Programs\""
     exec "copy bin\\heads-up-claude.exe \"%LOCALAPPDATA%\\Programs\\heads-up-claude.exe\""
@@ -34,11 +35,11 @@ task install, "Install the program to ~/.local/bin":
     echo "  ~/.local/bin/heads-up-claude --install"
 
 task build, "Build release binary":
-  exec "nim c -d:release -o:bin/heads_up_claude src/heads_up_claude.nim"
+  exec "nim c -d:release --hints:off --warnings:off -o:bin/heads_up_claude src/heads_up_claude.nim"
   echo "✓ Built bin/heads_up_claude"
 
 task dev, "Build debug binary":
-  exec "nim c -o:bin/heads_up_claude src/heads_up_claude.nim"
+  exec "nim c --hints:off -o:bin/heads_up_claude src/heads_up_claude.nim"
   echo "✓ Built bin/heads_up_claude (debug)"
 
 task test, "Run test suite":

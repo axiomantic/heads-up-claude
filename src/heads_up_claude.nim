@@ -1,10 +1,13 @@
-import std/[json, os, strutils, parseopt, times]
+import std/[json, os, strutils, parseopt, times, paths]
 import types, cache, usage, display, installer
 
 proc main() =
   var planArg = ""
   var installMode = false
   var showHelpMode = false
+  var tag = ""
+  var tagColor = ""
+  var claudeConfigDir = ""
 
   var p = initOptParser()
   while true:
@@ -21,6 +24,12 @@ proc main() =
         showHelpMode = true
       of "no-emoji":
         gUseEmoji = false
+      of "tag":
+        tag = p.val
+      of "tag-color":
+        tagColor = p.val
+      of "claude-config-dir":
+        claudeConfigDir = p.val
       of "reset-time":
         var parsed = false
         try:
@@ -55,9 +64,18 @@ proc main() =
     showHelp()
     return
 
+  let home = getEnv("HOME")
+  if claudeConfigDir.len == 0:
+    let envConfigDir = getEnv("CLAUDE_CONFIG_DIR")
+    if envConfigDir.len > 0:
+      claudeConfigDir = string(expandTilde(Path(envConfigDir)))
+    else:
+      claudeConfigDir = home / ".claude"
+  else:
+    claudeConfigDir = string(expandTilde(Path(claudeConfigDir)))
+
   if installMode:
-    let home = getEnv("HOME")
-    let claudeProjects = home / ".claude" / "projects"
+    let claudeProjects = claudeConfigDir / "projects"
 
     var projectsDir = ""
     if dirExists(claudeProjects):
@@ -66,11 +84,7 @@ proc main() =
           projectsDir = path
           break
 
-    if projectsDir.len > 0:
-      runInstall(projectsDir)
-    else:
-      echo "Error: Could not find Claude projects directory"
-      echo "Expected at: ", claudeProjects
+    runInstall(projectsDir, claudeConfigDir, tag, tagColor)
     return
 
   var currentPlan = Max20
@@ -86,7 +100,10 @@ proc main() =
       discard
 
   let input = stdin.readAll()
-  writeFile("/tmp/statusline-input.json", input)
+
+  # Debug the std input JSON
+  # writeFile("/tmp/statusline-input.json", input)
+
   let data = parseJson(input)
 
   let transcriptPath = data["transcript_path"].getStr()
@@ -94,7 +111,6 @@ proc main() =
   let projectDir = data["workspace"]["project_dir"].getStr()
   let model = data["model"]["display_name"].getStr()
 
-  let home = getEnv("HOME")
   let displayProjectDir =
     if projectDir.startsWith(home):
       "~" & projectDir[home.len..^1]
@@ -118,6 +134,12 @@ proc main() =
 
   let limits = PLAN_INFO[ord(currentPlan)]
 
+  var tagColorForDisplay = tagColor
+  if tagColor.len > 0:
+    let converted = colorNameToAnsi(tagColor)
+    if converted.len > 0:
+      tagColorForDisplay = converted
+
   renderStatusLine(
     displayProjectDir,
     branch,
@@ -132,7 +154,9 @@ proc main() =
     time5hr,
     hoursWeekly,
     percentWeekly,
-    timeWeekly
+    timeWeekly,
+    tag,
+    tagColorForDisplay
   )
 
 when isMainModule:

@@ -3,3 +3,4 @@ import test_cache
 import test_usage
 import test_display
 import test_installer
+import test_installer_integration

@@ -1,6 +1,27 @@
 import std/[strutils, osproc, json]
 import types
 
+proc colorNameToAnsi*(colorName: string): string =
+  let normalized = colorName.toLowerAscii().strip()
+  case normalized
+  of "black": result = "\x1b[30m"
+  of "red": result = "\x1b[31m"
+  of "green": result = "\x1b[32m"
+  of "yellow": result = "\x1b[33m"
+  of "blue": result = "\x1b[34m"
+  of "magenta", "purple": result = "\x1b[35m"
+  of "cyan": result = "\x1b[36m"
+  of "white": result = "\x1b[37m"
+  of "gray", "grey": result = "\x1b[90m"
+  of "bright-red", "brightred": result = "\x1b[91m"
+  of "bright-green", "brightgreen": result = "\x1b[92m"
+  of "bright-yellow", "brightyellow": result = "\x1b[93m"
+  of "bright-blue", "brightblue": result = "\x1b[94m"
+  of "bright-magenta", "brightmagenta", "bright-purple", "brightpurple": result = "\x1b[95m"
+  of "bright-cyan", "brightcyan": result = "\x1b[96m"
+  of "bright-white", "brightwhite": result = "\x1b[97m"
+  else: result = ""
+
 proc getGitBranch*(dir: string): string =
   try:
     let (output, exitCode) = execCmdEx("git -C " & quoteShell(dir) & " rev-parse --abbrev-ref HEAD 2>/dev/null")
@@ -31,8 +52,23 @@ proc renderStatusLine*(
   time5hr: string,
   hoursWeekly: float,
   percentWeekly: int,
-  timeWeekly: string
+  timeWeekly: string,
+  tag: string = "",
+  tagColor: string = ""
 ) =
+  if tag.len > 0:
+    stdout.write("[ ")
+    if tagColor.len > 0:
+      var colorCode = tagColor
+      if not tagColor.startsWith("\x1b["):
+        let converted = colorNameToAnsi(tagColor)
+        if converted.len > 0:
+          colorCode = converted
+      stdout.write(colorCode, tag, "\x1b[0m")
+    else:
+      stdout.write(tag)
+    stdout.write(" ] | ")
+
   stdout.write("\x1b[34m", displayProjectDir, "\x1b[0m")
 
   if branch.len > 0:

@@ -1,5 +1,5 @@
 import std/[os, strutils, times, json, options, strformat]
-import types, usage
+import types, usage, installer_tui
 
 proc parseResetTime*(input: string): Option[(int, int)] =
   let normalized = input.toLowerAscii().strip()
@@ -71,96 +71,32 @@ proc formatResetTime*(weekday: int, hourUTC: int): string =
 
   return dayName & " " & $hour12 & ":00 " & ampm & " Central (" & $hourUTC & ":00 UTC)"
 
-proc promptResetTime*(): DateTime =
+proc installBinary*(): bool =
   echo ""
-  echo "Weekly Reset Time"
-  echo "================="
-  echo "Visit https://claude.ai/settings/usage to see your reset time."
-  echo "Copy and paste the reset time (e.g., \"Resets Wed 5:59 PM\"),"
-  echo "or enter it in a format like \"Wed 5:59 PM\" or \"Wednesday 17:59\"."
-  echo ""
+  echo "Installing binary..."
 
-  while true:
-    stdout.write("Reset time (default: Wed 6:00 PM Central): ")
-    stdout.flushFile()
+  let currentExe = getAppFilename()
 
-    let input = stdin.readLine().strip()
+  when defined(windows):
+    let binDir = getEnv("LOCALAPPDATA") / "Programs"
+    let binPath = binDir / "heads-up-claude.exe"
+    createDir(binDir)
+    copyFile(currentExe, binPath)
+  else:
+    let binDir = getEnv("HOME") / ".local" / "bin"
+    let binPath = binDir / "heads-up-claude"
+    createDir(binDir)
+    copyFile(currentExe, binPath)
+    setFilePermissions(binPath, {fpUserExec, fpUserWrite, fpUserRead, fpGroupRead, fpGroupExec, fpOthersRead, fpOthersExec})
 
-    var weekday, hourUTC: int
+  echo "✓ Installed to ", binPath
+  return true
 
-    if input.len == 0:
-      weekday = 2
-      hourUTC = 23
-    else:
-      let parsed = parseResetTime(input)
-      if parsed.isNone:
-        echo "Could not parse reset time. Please try again."
-        echo "Examples: \"Wed 5:59 PM\", \"Wednesday 17:59\", \"Resets Thu 6:00 PM\""
-        echo ""
-        continue
+proc installStatusLine*(selectedPlan: PlanType, resetTime: DateTime, useEmoji: bool, claudeConfigDir: string, tag: string = "", tagColor: string = "") =
+  if not dirExists(claudeConfigDir):
+    createDir(claudeConfigDir)
 
-      (weekday, hourUTC) = parsed.get()
-      echo ""
-      echo "Parsed as: ", formatResetTime(weekday, hourUTC)
-      stdout.write("Is this correct? [Y/n]: ")
-      stdout.flushFile()
-
-      let confirm = stdin.readLine().strip().toLowerAscii()
-      if confirm.len > 0 and confirm[0] != 'y':
-        echo "Let's try again."
-        echo ""
-        continue
-
-    let now = now().utc()
-    var resetTime = now
-    resetTime.hour = hourUTC
-    resetTime.minute = 0
-    resetTime.second = 0
-    resetTime.nanosecond = 0
-
-    let currentWeekday = now.weekday.ord
-    let daysUntilReset = (weekday - currentWeekday + 7) mod 7
-
-    if daysUntilReset == 0:
-      if now.hour >= hourUTC:
-        resetTime = resetTime + initDuration(days = 7)
-    else:
-      resetTime = resetTime + initDuration(days = daysUntilReset)
-
-    return resetTime
-
-proc promptPlanSelection*(detectedPlan: PlanType): PlanType =
-  echo "Claude Code Plan"
-  echo "================"
-  echo ""
-  echo "Select your Claude plan:"
-  echo "  1. Pro (45 msgs/5hr, 40-80 hrs/week)"
-  echo "  2. Max 5 (225 msgs/5hr, 140-280 hrs/week)"
-  echo "  3. Max 20 (900 msgs/5hr, 240-480 hrs/week)"
-  echo ""
-  echo "Auto-detected: ", PLAN_INFO[ord(detectedPlan)].name, " (option ", ord(detectedPlan) + 1, ")"
-  stdout.write("Enter choice [1-3, default=", ord(detectedPlan) + 1, "]: ")
-  stdout.flushFile()
-
-  let input = stdin.readLine().strip()
-  if input.len == 0:
-    return detectedPlan
-
-  try:
-    let choice = parseInt(input)
-    case choice
-    of 1: return Pro
-    of 2: return Max5
-    of 3: return Max20
-    else:
-      echo "Invalid choice, using detected plan"
-      return detectedPlan
-  except:
-    echo "Invalid input, using detected plan"
-    return detectedPlan
-
-proc installStatusLine*(selectedPlan: PlanType, resetTime: DateTime, useEmoji: bool) =
-  let settingsPath = getEnv("HOME") / ".claude" / "settings.json"
+  let settingsPath = claudeConfigDir / "settings.json"
 
   when defined(windows):
     let binPath = getEnv("LOCALAPPDATA") / "Programs" / "heads-up-claude.exe"
@@ -184,6 +120,18 @@ proc installStatusLine*(selectedPlan: PlanType, resetTime: DateTime, useEmoji: b
   let resetISO = format(resetTime, "yyyy-MM-dd'T'HH:mm:sszzz")
 
   var command = binPath & " --plan=" & planArg & " --reset-time=\"" & resetISO & "\""
+
+  let home = getEnv("HOME")
+  let defaultConfigDir = home / ".claude"
+  if claudeConfigDir != defaultConfigDir:
+    command.add(" --claude-config-dir=\"" & claudeConfigDir & "\"")
+
+  if tag.len > 0:
+    command.add(" --tag=\"" & tag & "\"")
+
+  if tagColor.len > 0:
+    command.add(" --tag-color=\"" & tagColor & "\"")
+
   if not useEmoji:
     command.add(" --no-emoji")
 
@@ -218,12 +166,23 @@ proc showHelp*() =
   echo "  heads-up-claude [OPTIONS]"
   echo ""
   echo "Options:"
-  echo "  --install               Run interactive installer to configure settings.json"
-  echo "  --plan=PLAN             Set plan tier: pro, max5, or max20"
-  echo "  --reset-time=DATETIME   Set weekly reset time (ISO format with timezone)"
-  echo "                          Example: --reset-time=\"2025-10-30T18:00:00-05:00\""
-  echo "  --no-emoji              Use descriptive text instead of emoji"
-  echo "  --help                  Show this help message"
+  echo "  --install                    Run interactive installer to configure settings.json"
+  echo "  --plan=PLAN                  Set plan tier: pro, max5, or max20"
+  echo "  --reset-time=DATETIME        Set weekly reset time (ISO format with timezone)"
+  echo "                               Example: --reset-time=\"2025-10-30T18:00:00-05:00\""
+  echo "  --tag=TEXT                   Prepend [ TEXT ] | at the beginning of the status line"
+  echo "  --tag-color=COLOR            Color for the tag. Available colors:"
+  echo "                               black, red, green, yellow, blue, magenta, cyan, white,"
+  echo "                               gray, bright-red, bright-green, bright-yellow,"
+  echo "                               bright-blue, bright-magenta, bright-cyan, bright-white"
+  echo "  --claude-config-dir=PATH     Claude config directory"
+  echo "                               (default: $CLAUDE_CONFIG_DIR or ~/.claude)"
+  echo "  --no-emoji                   Use descriptive text instead of emoji"
+  echo "  --help                       Show this help message"
+  echo ""
+  echo "Environment Variables:"
+  echo "  CLAUDE_CONFIG_DIR            Default Claude config directory if --claude-config-dir"
+  echo "                               is not specified (default: ~/.claude)"
   echo ""
   echo "Examples:"
   echo "  # Run installer"
@@ -234,18 +193,14 @@ proc showHelp*() =
   echo ""
   echo "  # Use in settings.json with custom options"
   when defined(windows):
-    echo "  heads-up-claude --plan=max20 --reset-time=\"2025-10-30T23:00:00+00:00\" --no-emoji"
+    echo "  heads-up-claude --plan=max20 --reset-time=\"2025-10-30T23:00:00+00:00\" --tag=\"DEV\" --tag-color=green --no-emoji"
   else:
-    echo "  ~/.local/bin/heads-up-claude --plan=max20 --reset-time=\"2025-10-30T23:00:00+00:00\" --no-emoji"
+    echo "  ~/.local/bin/heads-up-claude --plan=max20 --reset-time=\"2025-10-30T23:00:00+00:00\" --tag=\"DEV\" --tag-color=green --no-emoji"
   echo ""
   echo "For more information, see https://github.com/axiomantic/heads-up-claude"
 
-proc runInstall*(projectsDir: string) =
-  echo "Heads Up Claude Installer"
-  echo "========================="
-  echo ""
-
-  let settingsPath = getEnv("HOME") / ".claude" / "settings.json"
+proc runInstall*(projectsDir: string, claudeConfigDir: string, tag: string = "", tagColor: string = "") =
+  let settingsPath = claudeConfigDir / "settings.json"
 
   if fileExists(settingsPath):
     try:
@@ -261,34 +216,30 @@ proc runInstall*(projectsDir: string) =
 
           let response = stdin.readLine().strip().toLowerAscii()
           if response.len == 0 or response[0] != 'y':
-            echo "Installation cancelled."
+            echo "Reconfiguration skipped - keeping existing settings."
+            echo ""
+            stdout.write("Update binary? [Y/n]: ")
+            stdout.flushFile()
+
+            let installResponse = stdin.readLine().strip().toLowerAscii()
+            if installResponse.len > 0 and installResponse[0] != 'y':
+              echo "Installation cancelled."
+              quit(1)
+
+            if not installBinary():
+              quit(1)
+
+            echo ""
+            echo "Your existing Claude Code statusline configuration is unchanged."
             return
           echo ""
     except:
       discard
 
   let detected = detectPlan(projectsDir)
+  let tuiResult = runInstallerTUI(detected)
 
-  let selected = promptPlanSelection(detected)
-
-  let resetTime = promptResetTime()
-
-  echo ""
-  echo "Display Style"
-  echo "============="
-  echo ""
-  echo "Choose display style:"
-  echo ""
-  echo "1. With emoji (default):"
-  echo "   💬 104.6K 65% 🟢 104.0K cached | 🕐 178/900 19% (3h22m) | 📅 19.3h/240h 8% (5d23h)"
-  echo ""
-  echo "2. No emoji (descriptive text):"
-  echo "   CTX 104.6K 65% CACHE 104.0K | 5HR 178/900 19% (3h22m) | WK 19.3h/240h 8% (5d23h)"
-  echo ""
-  stdout.write("Use emoji? [Y/n]: ")
-  stdout.flushFile()
-
-  let emojiInput = stdin.readLine().strip().toLowerAscii()
-  let useEmoji = emojiInput.len == 0 or emojiInput[0] == 'y'
-
-  installStatusLine(selected, resetTime, useEmoji)
+  if tuiResult.completed:
+    if not installBinary():
+      quit(1)
+    installStatusLine(tuiResult.selectedPlan, tuiResult.resetTime, tuiResult.useEmoji, claudeConfigDir, tag, tagColor)
