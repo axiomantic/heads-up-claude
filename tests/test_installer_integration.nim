@@ -154,8 +154,6 @@ suite "Installer Output Validation":
   test "success output format":
     let expectedOutputs = [
       "✓ Installed to",
-      "✓ Plan configured:",
-      "✓ Reset time:",
       "✓ Display style:",
       "Restart Claude Code"
     ]
@@ -181,7 +179,7 @@ suite "Settings JSON Generation":
     let settings = %* {
       "statusLine": {
         "type": "command",
-        "command": "heads-up-claude --plan=pro --reset-time=\"2025-10-30T23:00:00+00:00\""
+        "command": "heads-up-claude"
       }
     }
 
@@ -205,7 +203,7 @@ suite "Settings JSON Generation":
     writeFile(testSettingsPath, existingSettings.pretty())
 
     var settings = parseJson(readFile(testSettingsPath))
-    settings["statusLine"]["command"] = %"heads-up-claude --plan=max20"
+    settings["statusLine"]["command"] = %"heads-up-claude"
 
     writeFile(testSettingsPath, settings.pretty())
 
@@ -214,18 +212,15 @@ suite "Settings JSON Generation":
     check updated["otherSetting"].getStr() == "value"
     check "heads-up-claude" in updated["statusLine"]["command"].getStr()
 
-  test "command string includes all flags":
-    let command = "heads-up-claude --plan=max20 --reset-time=\"2025-10-30T23:00:00+00:00\" --no-emoji"
+  test "command string includes --no-emoji flag":
+    let command = "heads-up-claude --no-emoji"
 
-    check "--plan=max20" in command
-    check "--reset-time=" in command
     check "--no-emoji" in command
 
   test "command string with emoji (no flag)":
-    let command = "heads-up-claude --plan=pro --reset-time=\"2025-10-30T23:00:00+00:00\""
+    let command = "heads-up-claude"
 
-    check "--plan=pro" in command
-    check "--reset-time=" in command
+    check "heads-up-claude" in command
     check "--no-emoji" notin command
 
   test "settings.json is created even if config directory doesn't exist":
@@ -239,7 +234,7 @@ suite "Settings JSON Generation":
     let settings = %* {
       "statusLine": {
         "type": "command",
-        "command": "heads-up-claude --plan=max20"
+        "command": "heads-up-claude"
       }
     }
 
@@ -253,14 +248,14 @@ suite "Settings JSON Generation":
     removeDir(testConfigDir)
 
   test "color names are stored as-is in settings.json, not converted to ANSI":
-    let command = "heads-up-claude --plan=max20 --tag=\"DEV\" --tag-color=\"red\""
+    let command = "heads-up-claude --tag=\"DEV\" --tag-color=\"red\""
 
     check "--tag-color=\"red\"" in command
     check "--tag-color=\"\x1b[" notin command
 
 suite "Emoji Flag Generation":
   test "command includes --no-emoji when useEmoji is false":
-    var command = "heads-up-claude --plan=pro"
+    var command = "heads-up-claude"
     let useEmoji = false
 
     if not useEmoji:
@@ -269,7 +264,7 @@ suite "Emoji Flag Generation":
     check "--no-emoji" in command
 
   test "command does NOT include --no-emoji when useEmoji is true":
-    var command = "heads-up-claude --plan=pro"
+    var command = "heads-up-claude"
     let useEmoji = true
 
     if not useEmoji:
@@ -282,8 +277,7 @@ suite "Emoji Flag Generation":
     if dirExists(testConfigDir):
       removeDir(testConfigDir)
 
-    let resetTime = now().utc()
-    installStatusLine(Pro, resetTime, useEmoji=true, testConfigDir, "", "")
+    installStatusLine(useEmoji=true, testConfigDir, "", "")
 
     let settingsPath = testConfigDir / "settings.json"
     check fileExists(settingsPath)
@@ -298,8 +292,7 @@ suite "Emoji Flag Generation":
     if dirExists(testConfigDir):
       removeDir(testConfigDir)
 
-    let resetTime = now().utc()
-    installStatusLine(Pro, resetTime, useEmoji=false, testConfigDir, "", "")
+    installStatusLine(useEmoji=false, testConfigDir, "", "")
 
     let settingsPath = testConfigDir / "settings.json"
     check fileExists(settingsPath)

@@ -1,5 +1,5 @@
-import std/[json, os, times, streams, options, tables]
-import types, cache
+import std/[json, os, times, streams, options, osproc, strutils, re]
+import types
 
 proc getFirstTimestampAndContextTokens*(transcriptPath: string): (Option[DateTime], Option[DateTime], int, int, int, int) =
   try:
@@ -63,110 +63,91 @@ proc getFirstTimestampAndContextTokens*(transcriptPath: string): (Option[DateTim
   except:
     return (none(DateTime), none(DateTime), 0, 0, 0, 0)
 
-proc roundToHour*(dt: DateTime): DateTime =
-  result = dt
-  result.minute = 0
-  result.second = 0
-  result.nanosecond = 0
+proc loadPlanConfig*(claudeConfigDir: string): PlanLimits =
+  let configPath = claudeConfigDir / "heads_up_config.json"
 
-proc calculateWindowEnd*(firstTimestamp: DateTime): DateTime =
-  let startTime = roundToHour(firstTimestamp)
-  result = startTime + initDuration(hours = 5)
+  if not fileExists(configPath):
+    return PlanLimits(name: "Free", fiveHourMessages: 10, weeklyHoursMin: 0, weeklyHoursMax: 0)
 
-proc getNextWeeklyReset*(): DateTime =
-  let now = now().utc()
-
-  var resetTime = now
-  resetTime.hour = gWeeklyResetHourUTC
-  resetTime.minute = 0
-  resetTime.second = 0
-  resetTime.nanosecond = 0
-
-  let currentWeekday = now.weekday.ord
-  let daysUntilReset = (gWeeklyResetDay - currentWeekday + 7) mod 7
-
-  if daysUntilReset == 0:
-    if now.hour >= gWeeklyResetHourUTC:
-      resetTime = resetTime + initDuration(days = 7)
-  else:
-    resetTime = resetTime + initDuration(days = daysUntilReset)
-
-  return resetTime
-
-proc getFileTokensAndTimestamp*(filePath: string, cache: var Table[string, FileCache]): FileCache =
   try:
-    var result = FileCache()
-    if not fileExists(filePath):
-      return result
+    let config = parseFile(configPath)
+    result.fiveHourMessages = config.getOrDefault("five_hour_messages").getInt(10)
+    result.weeklyHoursMin = config.getOrDefault("weekly_hours_min").getInt(0)
 
-    let modTime = getLastModificationTime(filePath)
-    let cacheKey = getCacheKey(filePath, modTime)
-
-    if cache.hasKey(cacheKey):
-      return cache[cacheKey]
-
-    let (firstTs, lastTs, contextTokens, cacheReadTokens, apiTokens, messageCount) = getFirstTimestampAndContextTokens(filePath)
-
-    result.modTime = modTime
-    result.contextTokens = contextTokens
-    result.cacheReadTokens = cacheReadTokens
-    result.apiTokens = apiTokens
-    result.firstTimestamp = firstTs
-    result.lastTimestamp = lastTs
-    result.messageCount = messageCount
-    cache[cacheKey] = result
-
-    return result
+    # Set the plan name based on the plan type
+    let planType = config.getOrDefault("plan").getStr("free")
+    case planType
+    of "free":
+      result.name = "Free"
+      result.weeklyHoursMax = 0
+    of "pro":
+      result.name = "Pro"
+      result.weeklyHoursMax = 80
+    of "max5":
+      result.name = "Max 5"
+      result.weeklyHoursMax = 280
+    of "max20":
+      result.name = "Max 20"
+      result.weeklyHoursMax = 480
+    else:
+      result.name = "Pro"
+      result.weeklyHoursMax = 80
   except:
-    return FileCache()
+    result.name = "Free"
+    result.fiveHourMessages = 10
+    result.weeklyHoursMin = 0
+    result.weeklyHoursMax = 0
 
-proc calculate5HourAndWeeklyUsage*(projectsDir: string, cache: var Table[string, FileCache], currentPlan: PlanType): (int, int, string, float, int, string) =
-  let now = now().utc()
-
-  let nextReset = getNextWeeklyReset()
-  let lastReset = nextReset - initDuration(days = 7)
-
+proc estimateUsageFromTranscripts*(projectsDir: string, limits: PlanLimits): (int, int, string, float, int, string) =
   var messages5hr = 0
+  var percent5hr = 0
+  var time5hr = ""
   var hoursWeekly = 0.0
-  var latestWindowEnd = none(DateTime)
-  var earliestThisWeek = none(DateTime)
+  var percentWeekly = 0
+  var timeWeekly = ""
+
+  if not dirExists(projectsDir):
+    return (0, 0, "", 0.0, 0, "")
+
+  let now = now().utc()
+  let fiveHoursAgo = now - initDuration(hours = 5)
+  let sevenDaysAgo = now - initDuration(days = 7)
+
+  var recentMessages = 0
+  var weeklyTokens = 0
+  var oldestRecentTime = none(DateTime)
+  var oldestWeeklyTime = none(DateTime)
 
   try:
-    for file in walkFiles(projectsDir / "*.jsonl"):
-      let sessionData = getFileTokensAndTimestamp(file, cache)
+    for kind, path in walkDir(projectsDir):
+      if kind == pcDir:
+        for transcript in walkFiles(path / "*.jsonl"):
+          let (firstTs, lastTs, _, _, _, msgCount) = getFirstTimestampAndContextTokens(transcript)
 
-      if sessionData.firstTimestamp.isSome:
-        let firstTs = sessionData.firstTimestamp.get()
+          if lastTs.isSome:
+            let lastTime = lastTs.get()
 
-        let windowEnd = calculateWindowEnd(firstTs)
-        if windowEnd > now:
-          messages5hr += sessionData.messageCount
-          if latestWindowEnd.isNone or windowEnd > latestWindowEnd.get():
-            latestWindowEnd = some(windowEnd)
+            if lastTime >= fiveHoursAgo:
+              recentMessages += msgCount
+              if oldestRecentTime.isNone or firstTs.get() < oldestRecentTime.get():
+                oldestRecentTime = firstTs
 
-        if sessionData.lastTimestamp.isSome:
-          let lastTs = sessionData.lastTimestamp.get()
-          if lastTs >= lastReset:
-            let effectiveStart = if firstTs < lastReset: lastReset else: firstTs
-            let duration = (lastTs - effectiveStart).inSeconds.float / 3600.0
-            if duration > 0:
-              hoursWeekly += duration
-
-              if earliestThisWeek.isNone or effectiveStart < earliestThisWeek.get():
-                earliestThisWeek = some(effectiveStart)
+            if lastTime >= sevenDaysAgo:
+              if firstTs.isSome and firstTs.get() >= sevenDaysAgo:
+                let duration = lastTime - firstTs.get()
+                weeklyTokens += int(duration.inMinutes)
+                if oldestWeeklyTime.isNone or firstTs.get() < oldestWeeklyTime.get():
+                  oldestWeeklyTime = firstTs
   except:
     discard
 
-  let limits = PLAN_INFO[ord(currentPlan)]
+  percent5hr = min(100, int((recentMessages.float / limits.fiveHourMessages.float) * 100.0))
+  messages5hr = recentMessages
 
-  let percent5hr = if messages5hr > 0: (messages5hr * 100) div limits.fiveHourMessages else: 0
-
-  let percentWeekly = if hoursWeekly > 0: int((hoursWeekly * 100.0) / limits.weeklyHoursMin.float) else: 0
-
-  var time5hr = ""
-  if latestWindowEnd.isSome:
-    let remaining = latestWindowEnd.get() - now
-    if remaining.inSeconds > 0:
+  if oldestRecentTime.isSome:
+    let resetTime = oldestRecentTime.get() + initDuration(hours = 5)
+    if resetTime > now:
+      let remaining = resetTime - now
       let hoursLeft = remaining.inHours
       let minsLeft = remaining.inMinutes mod 60
       if hoursLeft > 0:
@@ -174,39 +155,141 @@ proc calculate5HourAndWeeklyUsage*(projectsDir: string, cache: var Table[string,
       else:
         time5hr = $minsLeft & "m"
 
-  var timeWeekly = ""
-  let remaining = nextReset - now
-  if remaining.inSeconds > 0:
-    let daysLeft = remaining.inDays
-    let hoursLeft = remaining.inHours mod 24
-    if daysLeft > 0:
-      timeWeekly = $daysLeft & "d" & $hoursLeft & "h"
-    else:
-      timeWeekly = $hoursLeft & "h"
+  if limits.weeklyHoursMin > 0:
+    hoursWeekly = weeklyTokens.float / 60.0
+    percentWeekly = min(100, int((hoursWeekly / limits.weeklyHoursMin.float) * 100.0))
+
+    if oldestWeeklyTime.isSome:
+      let resetTime = oldestWeeklyTime.get() + initDuration(days = 7)
+      if resetTime > now:
+        let remaining = resetTime - now
+        let daysLeft = remaining.inDays
+        let hoursLeft = remaining.inHours mod 24
+        if daysLeft > 0:
+          timeWeekly = $daysLeft & "d" & $hoursLeft & "h"
+        else:
+          timeWeekly = $hoursLeft & "h"
 
   return (messages5hr, percent5hr, time5hr, hoursWeekly, percentWeekly, timeWeekly)
 
-proc detectPlan*(projectsDir: string): PlanType =
-  var cache = loadCache()
-  defer: saveCache(cache)
+proc stripAnsi(s: string): string =
+  ## Remove ANSI escape codes from string
+  result = s.replace(re"\x1b\[[0-9;]*[a-zA-Z]", "")
+  result = result.replace(re"\x1b\[?[0-9;]*[a-zA-Z]", "")
+  result = result.replace("\x1b", "")
 
-  let now = now().utc()
-  var maxMessages5hr = 0
+proc parseResetTime(resetStr: string): string =
+  ## Parse reset time like "8:59pm (America/Chicago)" and convert to relative time with day
+  ## Returns format like "5h30m" for session or "2d5h" for weekly
+  try:
+    # Extract the time part (e.g., "8:59pm")
+    let timeMatch = resetStr.find(re"(\d+):(\d+)(am|pm)")
+    if timeMatch < 0:
+      return ""
+
+    let timePart = resetStr[0..<resetStr.find(" (")]
+    var hour = 0
+    var minute = 0
+
+    # Parse hour and minute
+    let colonPos = timePart.find(":")
+    if colonPos > 0:
+      hour = parseInt(timePart[0..<colonPos])
+      let minuteEnd = if timePart.contains("am"): timePart.find("am") else: timePart.find("pm")
+      minute = parseInt(timePart[colonPos+1..<minuteEnd])
+
+      # Convert to 24-hour format
+      if timePart.contains("pm") and hour != 12:
+        hour += 12
+      elif timePart.contains("am") and hour == 12:
+        hour = 0
+
+    # Get current time (in UTC, we'll assume the timezone matches system for simplicity)
+    let nowLocal = now()
+    var resetTime = initDateTime(nowLocal.monthday, nowLocal.month, nowLocal.year, hour, minute, 0, nowLocal.timezone)
+
+    # If reset time is in the past, it's tomorrow/next week
+    if resetTime <= nowLocal:
+      resetTime = resetTime + initDuration(days = 1)
+
+    let remaining = resetTime - nowLocal
+    let daysLeft = remaining.inDays
+    let hoursLeft = remaining.inHours mod 24
+    let minsLeft = remaining.inMinutes mod 60
+
+    if daysLeft > 0:
+      return $daysLeft & "d" & $hoursLeft & "h"
+    elif hoursLeft > 0:
+      return $hoursLeft & "h" & $minsLeft & "m"
+    else:
+      return $minsLeft & "m"
+  except:
+    return ""
+
+proc getRealUsageData*(): (int, string, int, string) =
+  ## Get real usage data from claude /config
+  ## Returns (sessionPercent, sessionResetTime, weeklyPercent, weeklyResetTime)
+
+  # Find the get_usage.exp script - it's installed in the same directory as the binary
+  let scriptPath = getAppDir() / "get_usage.exp"
+
+  if not fileExists(scriptPath):
+    return (0, "", 0, "")
 
   try:
-    for file in walkFiles(projectsDir / "*.jsonl"):
-      let sessionData = getFileTokensAndTimestamp(file, cache)
-      if sessionData.firstTimestamp.isSome:
-        let windowEnd = calculateWindowEnd(sessionData.firstTimestamp.get())
-        if windowEnd > now:
-          if sessionData.messageCount > maxMessages5hr:
-            maxMessages5hr = sessionData.messageCount
-  except:
-    discard
+    let (output, exitCode) = execCmdEx(scriptPath)
 
-  if maxMessages5hr > 225:
-    return Max20
-  elif maxMessages5hr > 45:
-    return Max5
-  else:
-    return Pro
+    if exitCode != 0:
+      return (0, "", 0, "")
+
+    # Parse the output
+    var sessionPercent = 0
+    var sessionResetTime = ""
+    var weeklyPercent = 0
+    var weeklyResetTime = ""
+
+    let lines = output.splitLines()
+    var i = 0
+
+    while i < lines.len:
+      let cleanLine = lines[i].stripAnsi().strip()
+
+      # Look for "Current session"
+      if "Current session" in cleanLine:
+        # Next line should have the percentage
+        if i + 1 < lines.len:
+          let percentLine = lines[i + 1].stripAnsi()
+          let matches = percentLine.findAll(re"\d+")
+          if matches.len > 0:
+            sessionPercent = parseInt(matches[0])
+
+        # Line after that should have reset time
+        if i + 2 < lines.len:
+          let resetLine = lines[i + 2].stripAnsi().strip()
+          if "Resets" in resetLine:
+            let parts = resetLine.split("Resets ")
+            if parts.len > 1:
+              sessionResetTime = parseResetTime(parts[1].strip())
+
+      # Look for "Current week (all models)"
+      elif "Current week (all models)" in cleanLine:
+        # Next line should have the percentage
+        if i + 1 < lines.len:
+          let percentLine = lines[i + 1].stripAnsi()
+          let matches = percentLine.findAll(re"\d+")
+          if matches.len > 0:
+            weeklyPercent = parseInt(matches[0])
+
+        # Line after that should have reset time
+        if i + 2 < lines.len:
+          let resetLine = lines[i + 2].stripAnsi().strip()
+          if "Resets" in resetLine:
+            let parts = resetLine.split("Resets ")
+            if parts.len > 1:
+              weeklyResetTime = parseResetTime(parts[1].strip())
+
+      inc i
+
+    return (sessionPercent, sessionResetTime, weeklyPercent, weeklyResetTime)
+  except:
+    return (0, "", 0, "")

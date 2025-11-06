@@ -16,6 +16,34 @@ CROSS="${RED}✗${NC}"
 ARROW="${BLUE}→${NC}"
 INFO="${CYAN}ℹ${NC}"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Default config directory
+CLAUDE_CONFIG_DIR="$HOME/.claude"
+
+print_help() {
+    echo "Heads Up Claude - Installation Script"
+    echo ""
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  --claude-config-dir=PATH    Claude config directory"
+    echo "                              If not specified, installer will auto-detect"
+    echo "                              existing Claude directories and prompt for selection"
+    echo "  --help, -h                  Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0                                    # Auto-detect and prompt for selection"
+    echo "  $0 --claude-config-dir=~/.claude-work # Install with specific config directory"
+    echo ""
+    echo "Auto-detection:"
+    echo "  The installer searches for directories containing 'history.jsonl' or 'CLAUDE.md'"
+    echo "  files in your home directory and prompts you to select which one to use."
+    echo ""
+    exit 0
+}
+
 print_header() {
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
@@ -175,45 +203,173 @@ install_nimble() {
     fi
 }
 
-run_installer() {
+build_binaries() {
     echo ""
-    print_step "Building heads-up-claude..."
+    print_step "Installing dependencies..."
     echo ""
 
-    # Build release binary
-    if ! nim c -d:release --hints:off --warnings:off -o:/tmp/heads-up-claude src/heads_up_claude.nim > /dev/null 2>&1; then
-        print_error "Build failed"
+    nimble install -y
+
+    echo ""
+    print_step "Building statusline binary..."
+    echo ""
+
+    # Build statusline binary - show all output
+    if ! nim c -d:release -o:/tmp/heads-up-claude src/heads_up_claude.nim; then
+        echo ""
+        print_error "Statusline build failed"
         exit 1
     fi
 
-    print_success "Build complete"
+    print_success "Statusline binary built"
+
+    # Copy expect script to tmp for installation
     echo ""
-    print_step "Starting installation..."
+    print_step "Copying usage data script..."
+    if [ -f "$SCRIPT_DIR/get_usage.exp" ]; then
+        cp "$SCRIPT_DIR/get_usage.exp" /tmp/get_usage.exp
+        chmod +x /tmp/get_usage.exp
+        print_success "Usage data script prepared"
+    else
+        print_warning "get_usage.exp not found - usage data may be limited"
+    fi
+}
+
+
+run_statusline_installer() {
+    local claude_config_dir=$1
+    echo ""
+    print_step "Configuring statusline..."
     echo ""
 
-    if /tmp/heads-up-claude --install; then
+    if /tmp/heads-up-claude --install --claude-config-dir="$claude_config_dir"; then
         rm -f /tmp/heads-up-claude
         return 0
     else
         rm -f /tmp/heads-up-claude
         echo ""
-        print_error "Installation failed"
+        print_error "Statusline configuration failed"
         exit 1
     fi
 }
 
+
+detect_claude_dirs() {
+    echo ""
+    print_step "Detecting Claude config directories..."
+    echo ""
+
+    # Find directories containing history.jsonl or CLAUDE.md
+    # Search one level deep in home directory, including hidden directories
+    local found_dirs=()
+
+    # Use find to search for directories containing the marker files
+    while IFS= read -r dir; do
+        found_dirs+=("$dir")
+    done < <(find "$HOME" -maxdepth 2 -type f \( -name "history.jsonl" -o -name "CLAUDE.md" \) -exec dirname {} \; 2>/dev/null | sort -u)
+
+    if [ ${#found_dirs[@]} -eq 0 ]; then
+        print_info "No existing Claude config directories detected"
+        print_info "Using default: $CLAUDE_CONFIG_DIR"
+        return
+    fi
+
+    print_success "Found ${#found_dirs[@]} Claude config director(ies):"
+    echo ""
+
+    # Display found directories with numbers
+    local i=1
+    for dir in "${found_dirs[@]}"; do
+        local display_dir="${dir/#$HOME/\~}"
+        echo "  $i) $display_dir"
+        i=$((i + 1))
+    done
+    echo "  $i) Custom path"
+    echo "  $((i + 1))) Use default (~/.claude)"
+    echo ""
+
+    # Prompt user to select
+    local valid_input=false
+    while [ "$valid_input" = false ]; do
+        read -p "Select Claude config directory [1-$((i + 1))]: " selection
+
+        if [[ "$selection" =~ ^[0-9]+$ ]]; then
+            if [ "$selection" -ge 1 ] && [ "$selection" -le ${#found_dirs[@]} ]; then
+                # User selected one of the found directories
+                CLAUDE_CONFIG_DIR="${found_dirs[$((selection - 1))]}"
+                print_success "Selected: ${CLAUDE_CONFIG_DIR/#$HOME/\~}"
+                valid_input=true
+            elif [ "$selection" -eq "$i" ]; then
+                # User wants custom path
+                echo ""
+                read -p "Enter custom Claude config directory path: " custom_path
+                # Expand tilde if present
+                custom_path="${custom_path/#\~/$HOME}"
+                if [ -n "$custom_path" ]; then
+                    CLAUDE_CONFIG_DIR="$custom_path"
+                    print_success "Using custom path: ${CLAUDE_CONFIG_DIR/#$HOME/\~}"
+                    valid_input=true
+                else
+                    print_error "Invalid path"
+                fi
+            elif [ "$selection" -eq "$((i + 1))" ]; then
+                # User wants default
+                CLAUDE_CONFIG_DIR="$HOME/.claude"
+                print_success "Using default: ~/.claude"
+                valid_input=true
+            else
+                print_error "Invalid selection"
+            fi
+        else
+            print_error "Please enter a number"
+        fi
+    done
+    echo ""
+}
+
 print_completion() {
+    local claude_config_dir=$1
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║${NC}  Installation Complete!                                  ${CYAN}║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    print_success "Binary installed to: ~/.local/bin/heads-up-claude"
+    print_success "Statusline binary: ~/.local/bin/heads-up-claude"
+    print_success "Settings configured: $claude_config_dir/settings.json"
+    echo ""
+    print_info "Usage estimates are based on local conversation activity"
     echo ""
 }
 
 main() {
+    # Parse command line arguments
+    local skip_detection=false
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --claude-config-dir=*)
+                CLAUDE_CONFIG_DIR="${1#*=}"
+                # Expand tilde if present
+                CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR/#\~/$HOME}"
+                skip_detection=true
+                shift
+                ;;
+            --help|-h)
+                print_help
+                ;;
+            *)
+                echo "Unknown option: $1"
+                echo "Use --help for usage information"
+                exit 1
+                ;;
+        esac
+    done
+
     print_header
+
+    # Detect Claude config directories if not explicitly provided
+    if [ "$skip_detection" = false ]; then
+        detect_claude_dirs
+    fi
 
     # Check for nimble
     if ! check_nimble; then
@@ -224,12 +380,15 @@ main() {
         install_nimble "$pkg_manager"
     fi
 
-    # Run the installer (which will build and install)
-    if run_installer; then
-        # Print completion message only if installer succeeded
-        print_completion
-    fi
+    # Build binary
+    build_binaries
+
+    # Run the statusline installer
+    run_statusline_installer "$CLAUDE_CONFIG_DIR"
+
+    # Print completion
+    print_completion "$CLAUDE_CONFIG_DIR"
 }
 
 # Run main function
-main
+main "$@"

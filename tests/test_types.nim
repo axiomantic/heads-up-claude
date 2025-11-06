@@ -26,11 +26,5 @@ suite "Types Module":
     check max20.weeklyHoursMin == 240
     check max20.weeklyHoursMax == 480
 
-  test "Default weekly reset values":
-    check DEFAULT_WEEKLY_RESET_DAY == 2
-    check DEFAULT_WEEKLY_RESET_HOUR_UTC == 23
-
   test "Global variables initialize correctly":
-    check gWeeklyResetDay == DEFAULT_WEEKLY_RESET_DAY
-    check gWeeklyResetHourUTC == DEFAULT_WEEKLY_RESET_HOUR_UTC
     check gUseEmoji == true

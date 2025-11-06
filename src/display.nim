@@ -199,3 +199,89 @@ proc renderStatusLine*(
     stdout.write(" (")
     stdout.write("\x1b[36m", timeWeekly, "\x1b[0m")
     stdout.write(")")
+
+proc renderMinimalStatusLine*(
+  displayProjectDir: string,
+  branch: string,
+  limits: PlanLimits,
+  model: string,
+  data: JsonNode,
+  conversationTokens: int,
+  conversationPercentUsed: int,
+  cacheReadTokens: int,
+  tag: string = "",
+  tagColor: string = ""
+) =
+  if tag.len > 0:
+    stdout.write("[ ")
+    if tagColor.len > 0:
+      var colorCode = tagColor
+      if not tagColor.startsWith("\x1b["):
+        let converted = colorNameToAnsi(tagColor)
+        if converted.len > 0:
+          colorCode = converted
+      stdout.write(colorCode, tag, "\x1b[0m")
+    else:
+      stdout.write(tag)
+    stdout.write(" ] | ")
+
+  stdout.write("\x1b[34m", displayProjectDir, "\x1b[0m")
+
+  if branch.len > 0:
+    stdout.write(" | ")
+    stdout.write("\x1b[35m", branch, "\x1b[0m")
+
+  stdout.write(" | ")
+
+  stdout.write("\x1b[35m", limits.name, "\x1b[0m")
+
+  var modelDisplay = model
+  if data.hasKey("model") and data["model"].hasKey("thinking"):
+    let thinkingEnabled = data["model"]["thinking"].getBool()
+    if thinkingEnabled:
+      modelDisplay = "\xf0\x9f\xa7\xa0 " & model
+
+  stdout.write(" | ")
+  stdout.write("\x1b[36m", modelDisplay, "\x1b[0m")
+
+  stdout.write(" | ")
+  if gUseEmoji:
+    stdout.write("\xf0\x9f\x92\xac ")
+  else:
+    stdout.write("CTX ")
+  let conversationTokenDisplay = formatTokenCount(conversationTokens)
+
+  if conversationPercentUsed >= 100:
+    stdout.write("\x1b[1;91m", conversationTokenDisplay, "\x1b[0m")
+    stdout.write(" ")
+    if gUseEmoji:
+      stdout.write("\x1b[1;91m⚠️ compact imminent\x1b[0m")
+    else:
+      stdout.write("\x1b[1;91mWARN compact imminent\x1b[0m")
+  elif conversationPercentUsed >= 90:
+    stdout.write("\x1b[1;91m", conversationTokenDisplay, "\x1b[0m")
+    stdout.write(" ")
+    if gUseEmoji:
+      stdout.write("\x1b[1;91m⚠️ ", conversationPercentUsed, "%\x1b[0m")
+    else:
+      stdout.write("\x1b[1;91mWARN ", conversationPercentUsed, "%\x1b[0m")
+  elif conversationPercentUsed >= 80:
+    stdout.write("\x1b[31m", conversationTokenDisplay, "\x1b[0m")
+    stdout.write(" ")
+    stdout.write("\x1b[31m", conversationPercentUsed, "%\x1b[0m")
+  else:
+    stdout.write("\x1b[33m", conversationTokenDisplay, "\x1b[0m")
+    stdout.write(" ")
+    stdout.write("\x1b[33m", conversationPercentUsed, "%\x1b[0m")
+
+  if cacheReadTokens > 0:
+    let cacheDisplay = formatTokenCount(cacheReadTokens)
+    stdout.write(" ")
+    if gUseEmoji:
+      stdout.write("\xf0\x9f\x9f\xa2 ")
+    else:
+      stdout.write("CACHE ")
+    stdout.write("\x1b[32m", cacheDisplay)
+    if not gUseEmoji:
+      stdout.write(" cached")
+    stdout.write("\x1b[0m")

@@ -1,8 +1,7 @@
-import std/[json, os, strutils, parseopt, times, paths]
-import types, cache, usage, display, installer
+import std/[json, os, strutils, parseopt, paths, times]
+import types, usage, display, installer
 
 proc main() =
-  var planArg = ""
   var installMode = false
   var showHelpMode = false
   var tag = ""
@@ -16,8 +15,6 @@ proc main() =
     of cmdEnd: break
     of cmdLongOption, cmdShortOption:
       case p.key
-      of "plan":
-        planArg = p.val
       of "install":
         installMode = true
       of "help", "h":
@@ -30,31 +27,6 @@ proc main() =
         tagColor = p.val
       of "claude-config-dir":
         claudeConfigDir = p.val
-      of "reset-time":
-        var parsed = false
-        try:
-          let resetTime = parse(p.val, "yyyy-MM-dd'T'HH:mm:sszzz")
-          let resetUTC = resetTime.utc()
-          gWeeklyResetDay = resetUTC.weekday.ord
-          gWeeklyResetHourUTC = resetUTC.hour
-          parsed = true
-        except CatchableError:
-          discard
-
-        if not parsed:
-          try:
-            let resetTimeLocal = parse(p.val, "yyyy-MM-dd'T'HH:mm:ss")
-            let resetUTC = resetTimeLocal.utc()
-            gWeeklyResetDay = resetUTC.weekday.ord
-            gWeeklyResetHourUTC = resetUTC.hour
-            parsed = true
-          except CatchableError:
-            discard
-
-        if not parsed:
-          echo "Error: Could not parse --reset-time value: ", p.val
-          echo "Expected ISO format like: 2025-10-30T18:00:00-05:00 or 2025-10-30T18:00:00"
-          quit(1)
       else:
         discard
     else:
@@ -87,17 +59,7 @@ proc main() =
     runInstall(projectsDir, claudeConfigDir, tag, tagColor)
     return
 
-  var currentPlan = Max20
-  if planArg.len > 0:
-    case planArg.toLowerAscii()
-    of "pro":
-      currentPlan = Pro
-    of "max5", "max5x", "max-5":
-      currentPlan = Max5
-    of "max20", "max20x", "max-20":
-      currentPlan = Max20
-    else:
-      discard
+  let limits = loadPlanConfig(claudeConfigDir)
 
   let input = stdin.readAll()
 
@@ -127,18 +89,41 @@ proc main() =
     160000
   let conversationPercentUsed = if conversationTokens > 0: (conversationTokens * 100) div compactThreshold else: 0
 
-  let projectsDir = parentDir(transcriptPath)
-  var cacheObj = loadCache()
-  defer: saveCache(cacheObj)
-  let (messages5hr, percent5hr, time5hr, hoursWeekly, percentWeekly, timeWeekly) = calculate5HourAndWeeklyUsage(projectsDir, cacheObj, currentPlan)
-
-  let limits = PLAN_INFO[ord(currentPlan)]
-
   var tagColorForDisplay = tagColor
   if tagColor.len > 0:
     let converted = colorNameToAnsi(tagColor)
     if converted.len > 0:
       tagColorForDisplay = converted
+
+  # Get real usage from Claude's /config or fall back to estimates
+  let (sessionPercent, sessionResetTime, weeklyPercent, weeklyResetTime) = getRealUsageData()
+
+  var messages5hr = 0
+  var percent5hr = sessionPercent
+  var time5hr = sessionResetTime
+  var hoursWeekly = 0.0
+  var percentWeekly = weeklyPercent
+  var timeWeekly = weeklyResetTime
+  var usingEstimates = false
+
+  # Fall back to estimates if real data isn't available
+  if sessionPercent == 0 and weeklyPercent == 0:
+    usingEstimates = true
+    let projectsDir = claudeConfigDir / "projects"
+    let (m5hr, p5hr, t5hr, hWeekly, pWeekly, tWeekly) =
+      estimateUsageFromTranscripts(projectsDir, limits)
+    messages5hr = m5hr
+    percent5hr = p5hr
+    time5hr = t5hr
+    hoursWeekly = hWeekly
+    percentWeekly = pWeekly
+    timeWeekly = tWeekly
+  else:
+    # Calculate message count from percentage when using real data
+    messages5hr = int((sessionPercent.float / 100.0) * limits.fiveHourMessages.float)
+    # Calculate hours from percentage when using real data
+    if limits.weeklyHoursMin > 0:
+      hoursWeekly = (weeklyPercent.float / 100.0) * limits.weeklyHoursMin.float
 
   renderStatusLine(
     displayProjectDir,
@@ -158,6 +143,10 @@ proc main() =
     tag,
     tagColorForDisplay
   )
+
+  if usingEstimates:
+    stdout.write(" | ")
+    stdout.write("\x1b[90m~estimates\x1b[0m")
 
 when isMainModule:
   main()

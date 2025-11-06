@@ -1,44 +1,8 @@
 import unittest
-import std/[times, os, options, tables]
-import ../src/types
+import std/[times, os, options]
 import ../src/usage
 
 suite "Usage Module":
-  test "roundToHour rounds down to nearest hour":
-    let dt = parse("2025-01-01T12:34:56.789Z", "yyyy-MM-dd'T'HH:mm:ss'.'fff'Z'", utc())
-    let rounded = roundToHour(dt)
-
-    check rounded.hour == 12
-    check rounded.minute == 0
-    check rounded.second == 0
-    check rounded.nanosecond == 0
-
-  test "calculateWindowEnd adds 5 hours to rounded hour":
-    let dt = parse("2025-01-01T12:34:56.789Z", "yyyy-MM-dd'T'HH:mm:ss'.'fff'Z'", utc())
-    let windowEnd = calculateWindowEnd(dt)
-
-    check windowEnd.hour == 17
-    check windowEnd.minute == 0
-
-  test "getNextWeeklyReset calculates correct reset time":
-    gWeeklyResetDay = 2
-    gWeeklyResetHourUTC = 23
-
-    let nextReset = getNextWeeklyReset()
-
-    check nextReset.weekday.ord == 2
-    check nextReset.hour == 23
-    check nextReset.minute == 0
-    check nextReset.second == 0
-
-  test "detectPlan returns Pro for no sessions":
-    let tempDir = getTempDir() / "test-detect-plan-empty"
-    createDir(tempDir)
-    defer: removeDir(tempDir)
-
-    let plan = detectPlan(tempDir)
-    check plan == Pro
-
   test "getFirstTimestampAndContextTokens handles missing file":
     let (first, last, ctx, cache, api, msgs) = getFirstTimestampAndContextTokens("/nonexistent/file.jsonl")
 

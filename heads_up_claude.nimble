@@ -2,7 +2,7 @@
 
 version       = "0.1.0"
 author        = "Axiomantic"
-description   = "A statusline for Claude Code showing real-time token usage, rate limits, and weekly metrics"
+description   = "A statusline for Claude Code showing estimated token usage, rate limits, and weekly metrics"
 license       = "MIT"
 srcDir        = "src"
 bin           = @["heads_up_claude"]
@@ -12,7 +12,6 @@ binDir        = "bin"
 # Dependencies
 
 requires "nim >= 2.0.0"
-requires "illwill >= 0.3.0"
 
 # Tasks
 

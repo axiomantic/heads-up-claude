@@ -1,0 +1,42 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+log_user 1
+
+# Spawn claude with /config
+spawn claude /config
+
+# Wait for the config menu to appear
+expect {
+    "Config" { }
+    timeout {
+        puts "ERROR: Timeout waiting for config menu"
+        exit 1
+    }
+}
+
+# Wait a bit more to ensure everything is ready
+sleep 2
+
+# Send Tab to move to Usage tab
+send "\t"
+
+# Wait for Usage tab to appear with data
+expect {
+    "Current session" { }
+    timeout {
+        puts "ERROR: Timeout waiting for usage tab"
+        exit 1
+    }
+}
+
+# Wait for all data to load
+sleep 2
+
+# Send Escape to exit
+send "\x1b"
+
+# Capture remaining output
+expect eof
+
+# Output will be captured by the calling script
