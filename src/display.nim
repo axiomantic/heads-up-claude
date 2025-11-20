@@ -24,7 +24,7 @@ proc colorNameToAnsi*(colorName: string): string =
 
 proc getGitBranch*(dir: string): string =
   try:
-    let (output, exitCode) = execCmdEx("git -C " & quoteShell(dir) & " rev-parse --abbrev-ref HEAD 2>/dev/null")
+    let (output, exitCode) = execCmdEx("git --no-optional-locks -C " & quoteShell(dir) & " rev-parse --abbrev-ref HEAD 2>/dev/null")
     if exitCode == 0:
       result = output.strip()
     else:

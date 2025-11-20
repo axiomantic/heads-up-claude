@@ -59,6 +59,7 @@ proc main() =
     runInstall(projectsDir, claudeConfigDir, tag, tagColor)
     return
 
+  # Only read stdin when running as a statusline (not in install or help mode)
   let limits = loadPlanConfig(claudeConfigDir)
 
   let input = stdin.readAll()
