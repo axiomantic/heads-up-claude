@@ -19,3 +19,4 @@ nimcache/
 # Test files
 /tmp/
 *.log
+/tests/test_all

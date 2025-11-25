@@ -18,7 +18,7 @@ proc installBinary*(): bool =
     copyFile(currentExe, binPath)
     setFilePermissions(binPath, {fpUserExec, fpUserWrite, fpUserRead, fpGroupRead, fpGroupExec, fpOthersRead, fpOthersExec})
 
-    # Also install the expect script if it exists
+    # Install the expect script if it exists in /tmp (placed there by install script)
     let expectScriptSrc = "/tmp/get_usage.exp"
     let expectScriptDst = binDir / "get_usage.exp"
     if fileExists(expectScriptSrc):

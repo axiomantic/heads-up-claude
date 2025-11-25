@@ -1,4 +1,4 @@
-import std/[json, os, strutils, parseopt, paths, times]
+import std/[json, os, strutils, parseopt, paths]
 import types, usage, display, installer
 
 proc main() =

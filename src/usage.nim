@@ -1,4 +1,4 @@
-import std/[json, os, times, streams, options, osproc, strutils, re]
+import std/[json, os, times, streams, options, osproc]
 import types
 
 proc getFirstTimestampAndContextTokens*(transcriptPath: string): (Option[DateTime], Option[DateTime], int, int, int, int) =
@@ -172,124 +172,144 @@ proc estimateUsageFromTranscripts*(projectsDir: string, limits: PlanLimits): (in
 
   return (messages5hr, percent5hr, time5hr, hoursWeekly, percentWeekly, timeWeekly)
 
-proc stripAnsi(s: string): string =
-  ## Remove ANSI escape codes from string
-  result = s.replace(re"\x1b\[[0-9;]*[a-zA-Z]", "")
-  result = result.replace(re"\x1b\[?[0-9;]*[a-zA-Z]", "")
-  result = result.replace("\x1b", "")
+const
+  CACHE_TTL_SECONDS = 60  # Cache valid for 60 seconds
+  LOCK_STALE_SECONDS = 90  # Consider lock stale after 90 seconds (expect script timeout + buffer)
 
-proc parseResetTime(resetStr: string): string =
-  ## Parse reset time like "8:59pm (America/Chicago)" and convert to relative time with day
-  ## Returns format like "5h30m" for session or "2d5h" for weekly
+proc isLockStale(lockPath: string): bool =
+  ## Check if lock directory exists and is stale (too old)
+  let lockDir = lockPath & ".d"
+  if not dirExists(lockDir):
+    return false
   try:
-    # Extract the time part (e.g., "8:59pm")
-    let timeMatch = resetStr.find(re"(\d+):(\d+)(am|pm)")
-    if timeMatch < 0:
-      return ""
-
-    let timePart = resetStr[0..<resetStr.find(" (")]
-    var hour = 0
-    var minute = 0
-
-    # Parse hour and minute
-    let colonPos = timePart.find(":")
-    if colonPos > 0:
-      hour = parseInt(timePart[0..<colonPos])
-      let minuteEnd = if timePart.contains("am"): timePart.find("am") else: timePart.find("pm")
-      minute = parseInt(timePart[colonPos+1..<minuteEnd])
-
-      # Convert to 24-hour format
-      if timePart.contains("pm") and hour != 12:
-        hour += 12
-      elif timePart.contains("am") and hour == 12:
-        hour = 0
-
-    # Get current time (in UTC, we'll assume the timezone matches system for simplicity)
-    let nowLocal = now()
-    var resetTime = initDateTime(nowLocal.monthday, nowLocal.month, nowLocal.year, hour, minute, 0, nowLocal.timezone)
-
-    # If reset time is in the past, it's tomorrow/next week
-    if resetTime <= nowLocal:
-      resetTime = resetTime + initDuration(days = 1)
-
-    let remaining = resetTime - nowLocal
-    let daysLeft = remaining.inDays
-    let hoursLeft = remaining.inHours mod 24
-    let minsLeft = remaining.inMinutes mod 60
-
-    if daysLeft > 0:
-      return $daysLeft & "d" & $hoursLeft & "h"
-    elif hoursLeft > 0:
-      return $hoursLeft & "h" & $minsLeft & "m"
-    else:
-      return $minsLeft & "m"
+    let lockInfo = getFileInfo(lockDir)
+    let age = now().utc() - lockInfo.lastWriteTime.utc()
+    return age.inSeconds > LOCK_STALE_SECONDS
   except:
-    return ""
+    return false
+
+proc cleanStaleLock(lockPath: string) =
+  ## Remove lock directory if it's stale
+  let lockDir = lockPath & ".d"
+  if isLockStale(lockPath):
+    try:
+      removeDir(lockDir)
+    except:
+      discard
+
+proc readCache(cachePath: string): (int, string, int, string, bool) =
+  ## Read cached usage data. Returns (session%, sessionReset, weekly%, weeklyReset, isValid)
+  if not fileExists(cachePath):
+    return (0, "", 0, "", false)
+
+  try:
+    let cacheInfo = getFileInfo(cachePath)
+    let age = now().utc() - cacheInfo.lastWriteTime.utc()
+    let isValid = age.inSeconds < CACHE_TTL_SECONDS
+
+    let cache = parseFile(cachePath)
+    return (
+      cache["sessionPercent"].getInt(),
+      cache["sessionResetTime"].getStr(),
+      cache["weeklyPercent"].getInt(),
+      cache["weeklyResetTime"].getStr(),
+      isValid
+    )
+  except:
+    return (0, "", 0, "", false)
+
+proc spawnBackgroundRefresh(scriptPath, cachePath, lockPath: string) =
+  ## Spawn a background process to refresh the cache without blocking.
+  ## Uses startProcess with poDaemon to fully detach.
+  try:
+    # Create a shell script with timeout protection and atomic locking
+    let refreshScript = getTempDir() / "heads-up-claude" / "refresh.sh"
+    let script = """#!/bin/bash
+TIMEOUT=60  # Kill expect script after 60 seconds
+
+# Atomic lock using mkdir (atomic on POSIX)
+# mkdir fails if dir already exists, so only one process wins
+LOCK_DIR="$2.d"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  exit 0  # Another process has the lock
+fi
+trap 'rm -rf "$LOCK_DIR"' EXIT
+
+# Run expect script with timeout
+if command -v timeout &> /dev/null; then
+  output=$(timeout $TIMEOUT "$1" 2>/dev/null)
+else
+  # macOS fallback: use perl for timeout
+  output=$(perl -e 'alarm shift; exec @ARGV' $TIMEOUT "$1" 2>/dev/null)
+fi
+
+if [ $? -ne 0 ]; then
+  exit 1
+fi
+
+# Parse session percentage
+session_pct=$(echo "$output" | grep -A1 "Current session" | tail -1 | grep -oE '[0-9]+' | head -1)
+session_pct=${session_pct:-0}
+
+# Parse weekly percentage
+weekly_pct=$(echo "$output" | grep -A1 "Current week" | tail -1 | grep -oE '[0-9]+' | head -1)
+weekly_pct=${weekly_pct:-0}
+
+# Write cache atomically (write to temp, then move)
+tmp_cache="$3.tmp.$$"
+cat > "$tmp_cache" << EOF
+{"sessionPercent":$session_pct,"sessionResetTime":"","weeklyPercent":$weekly_pct,"weeklyResetTime":""}
+EOF
+mv "$tmp_cache" "$3"
+"""
+    writeFile(refreshScript, script)
+    setFilePermissions(refreshScript, {fpUserExec, fpUserWrite, fpUserRead})
+
+    # Fire and forget - startProcess returns immediately, we don't wait
+    discard startProcess(
+      refreshScript,
+      args = [scriptPath, lockPath, cachePath],
+      options = {poUsePath, poDaemon}
+    )
+  except:
+    discard
 
 proc getRealUsageData*(): (int, string, int, string) =
-  ## Get real usage data from claude /config
-  ## Returns (sessionPercent, sessionResetTime, weeklyPercent, weeklyResetTime)
+  ## Get real usage data from claude /config - NON-BLOCKING.
+  ##
+  ## Always returns immediately with cached data (even if stale).
+  ## If cache is stale, spawns a background daemon to refresh it.
+  ## Next statusline update will get fresh data.
+  ##
+  ## Guards against stacking:
+  ## - Lock file prevents multiple concurrent fetches
+  ## - Stale locks (>90s) are automatically cleaned up
+  ## - 60s timeout kills hung expect scripts
 
-  # Find the get_usage.exp script - it's installed in the same directory as the binary
   let scriptPath = getAppDir() / "get_usage.exp"
-
   if not fileExists(scriptPath):
     return (0, "", 0, "")
 
+  let cacheDir = getTempDir() / "heads-up-claude"
+  let cachePath = cacheDir / "usage_cache.json"
+  let lockPath = cacheDir / "usage.lock"
+
+  # Ensure cache directory exists
   try:
-    let (output, exitCode) = execCmdEx(scriptPath)
-
-    if exitCode != 0:
-      return (0, "", 0, "")
-
-    # Parse the output
-    var sessionPercent = 0
-    var sessionResetTime = ""
-    var weeklyPercent = 0
-    var weeklyResetTime = ""
-
-    let lines = output.splitLines()
-    var i = 0
-
-    while i < lines.len:
-      let cleanLine = lines[i].stripAnsi().strip()
-
-      # Look for "Current session"
-      if "Current session" in cleanLine:
-        # Next line should have the percentage
-        if i + 1 < lines.len:
-          let percentLine = lines[i + 1].stripAnsi()
-          let matches = percentLine.findAll(re"\d+")
-          if matches.len > 0:
-            sessionPercent = parseInt(matches[0])
-
-        # Line after that should have reset time
-        if i + 2 < lines.len:
-          let resetLine = lines[i + 2].stripAnsi().strip()
-          if "Resets" in resetLine:
-            let parts = resetLine.split("Resets ")
-            if parts.len > 1:
-              sessionResetTime = parseResetTime(parts[1].strip())
-
-      # Look for "Current week (all models)"
-      elif "Current week (all models)" in cleanLine:
-        # Next line should have the percentage
-        if i + 1 < lines.len:
-          let percentLine = lines[i + 1].stripAnsi()
-          let matches = percentLine.findAll(re"\d+")
-          if matches.len > 0:
-            weeklyPercent = parseInt(matches[0])
-
-        # Line after that should have reset time
-        if i + 2 < lines.len:
-          let resetLine = lines[i + 2].stripAnsi().strip()
-          if "Resets" in resetLine:
-            let parts = resetLine.split("Resets ")
-            if parts.len > 1:
-              weeklyResetTime = parseResetTime(parts[1].strip())
-
-      inc i
-
-    return (sessionPercent, sessionResetTime, weeklyPercent, weeklyResetTime)
+    createDir(cacheDir)
   except:
     return (0, "", 0, "")
+
+  # Clean up stale locks (from crashed/timed-out processes)
+  cleanStaleLock(lockPath)
+
+  # Read cache (may be stale or missing)
+  let (cachedSession, cachedSessionReset, cachedWeekly, cachedWeeklyReset, cacheValid) = readCache(cachePath)
+
+  # If cache is stale and no refresh in progress, spawn background refresh
+  # Lock is a directory (for atomic creation via mkdir)
+  if not cacheValid and not dirExists(lockPath & ".d"):
+    spawnBackgroundRefresh(scriptPath, cachePath, lockPath)
+
+  # Always return immediately with whatever we have
+  return (cachedSession, cachedSessionReset, cachedWeekly, cachedWeeklyReset)
