@@ -39,6 +39,14 @@ The install script will:
 
 **Note**: Nim 2.0.0 or higher is required. Visit https://nim-lang.org/install.html for installation instructions.
 
+### Upgrading
+
+```bash
+cd heads-up-claude
+git pull
+bash install.sh
+```
+
 ### Uninstalling
 
 ```bash
