@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.1.0"
+version       = "0.2.0"
 author        = "Axiomantic"
 description   = "A statusline for Claude Code showing estimated token usage, rate limits, and weekly metrics"
 license       = "MIT"

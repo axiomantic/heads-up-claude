@@ -39,6 +39,19 @@ The install script will:
 
 **Note**: Nim 2.0.0 or higher is required. Visit https://nim-lang.org/install.html for installation instructions.
 
+### Uninstalling
+
+```bash
+bash uninstall.sh
+```
+
+This removes:
+- Binary (`~/.local/bin/heads-up-claude`)
+- Expect script (`~/.local/bin/get_usage.exp`)
+- Config file (`~/.claude/heads_up_config.json`)
+- Cache directory (`$TMPDIR/heads-up-claude`)
+- `statusLine` entry from `~/.claude/settings.json` (requires `jq`)
+
 ## Understanding the Statusline
 
 The statusline displays several key metrics to help you manage your Claude Code usage:
@@ -199,6 +212,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Version
 
-Current version: **0.1.0** (2025-10-24)
+Current version: **0.2.0** (2025-01-09)
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.

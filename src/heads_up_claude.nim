@@ -97,7 +97,7 @@ proc main() =
       tagColorForDisplay = converted
 
   # Get real usage from Claude's /config or fall back to estimates
-  let (sessionPercent, sessionResetTime, weeklyPercent, weeklyResetTime) = getRealUsageData()
+  let (sessionPercent, sessionResetTime, weeklyPercent, weeklyResetTime, isVeryStale) = getRealUsageData()
 
   var messages5hr = 0
   var percent5hr = sessionPercent
@@ -145,7 +145,11 @@ proc main() =
     tagColorForDisplay
   )
 
-  if usingEstimates:
+  if isVeryStale and usingEstimates:
+    # Data is very stale (>5hrs) and we're falling back to estimates
+    stdout.write(" | ")
+    stdout.write("\x1b[33m[usage fetch failed]\x1b[0m")
+  elif usingEstimates:
     stdout.write(" | ")
     stdout.write("\x1b[90m~estimates\x1b[0m")
 
