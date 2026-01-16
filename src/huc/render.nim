@@ -1,7 +1,6 @@
 ## Statusline rendering utilities
 
-import std/[strutils, strformat]
-import ../shared/types
+import std/strutils
 
 var gUseEmoji* = true
 

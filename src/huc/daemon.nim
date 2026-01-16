@@ -1,7 +1,6 @@
 ## Daemon management utilities for statusline
 
 import std/[os, osproc, strutils, options]
-import ../shared/types
 
 proc getPlatform*(): string =
   ## Get current platform
