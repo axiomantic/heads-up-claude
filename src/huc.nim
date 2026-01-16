@@ -13,7 +13,7 @@ proc showHelp() =
   echo "  huc [OPTIONS]"
   echo ""
   echo "Options:"
-  echo "  --tag=TEXT               Prepend [ TEXT ] | to statusline"
+  echo "  --tag=TEXT               Prepend TEXT | to statusline"
   echo "  --tag-color=COLOR        Color for tag (blue, red, green, etc.)"
   echo "  --claude-config-dir=PATH Claude config directory (default: ~/.claude)"
   echo "  --no-emoji               Use text instead of emoji"

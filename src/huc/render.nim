@@ -109,16 +109,14 @@ proc renderUsageSection*(fiveHourMessages: int, planName: string,
     result.add(" (" & "\x1b[36m" & weeklyReset & "\x1b[0m" & ")")
 
 proc renderTag*(tag: string, tagColor: string): string =
-  ## Render optional tag prefix
+  ## Render optional tag prefix (user provides their own brackets if desired)
   if tag.len == 0:
     return ""
 
-  result = "[ "
   if tagColor.len > 0:
-    result.add(tagColor & tag & "\x1b[0m")
+    result = tagColor & tag & "\x1b[0m" & " | "
   else:
-    result.add(tag)
-  result.add(" ] | ")
+    result = tag & " | "
 
 proc colorNameToAnsi*(colorName: string): string =
   let normalized = colorName.toLowerAscii().strip()

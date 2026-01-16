@@ -1,7 +1,7 @@
 ## Tests for daemon logger module
 
 import unittest
-import std/[strutils]
+import std/[strutils, times]
 import ../src/hucd/logger
 import ../src/shared/types
 
@@ -31,3 +31,30 @@ suite "Daemon Logger":
     check msg.contains("INFO")
     check msg.contains("test message")
     check msg.contains("[")  # timestamp brackets
+
+  test "formatLogMessage includes timestamp in ISO format":
+    let msg = formatLogMessage(WARN, "warning test")
+    # Format: [YYYY-MM-DD HH:MM:SS] [LEVEL] message
+    check msg.contains("-")  # Date separator
+    check msg.contains(":")  # Time separator
+    check msg.contains("WARN")
+    check msg.contains("warning test")
+    # Verify format: starts with [timestamp] [level]
+    check msg.startsWith("[")
+    let parts = msg.split("] [")
+    check parts.len >= 2
+
+  test "formatLogMessage handles all log levels":
+    let debugMsg = formatLogMessage(DEBUG, "d")
+    let infoMsg = formatLogMessage(INFO, "i")
+    let warnMsg = formatLogMessage(WARN, "w")
+    let errorMsg = formatLogMessage(ERROR, "e")
+    check debugMsg.contains("DEBUG")
+    check infoMsg.contains("INFO")
+    check warnMsg.contains("WARN")
+    check errorMsg.contains("ERROR")
+
+  test "formatLogMessage preserves message content with special chars":
+    let msg = formatLogMessage(INFO, "path: /foo/bar, value: 123")
+    check msg.contains("/foo/bar")
+    check msg.contains("123")

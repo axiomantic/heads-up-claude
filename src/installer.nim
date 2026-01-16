@@ -18,14 +18,6 @@ proc installBinary*(): bool =
     copyFile(currentExe, binPath)
     setFilePermissions(binPath, {fpUserExec, fpUserWrite, fpUserRead, fpGroupRead, fpGroupExec, fpOthersRead, fpOthersExec})
 
-    # Install the expect script if it exists in /tmp (placed there by install script)
-    let expectScriptSrc = "/tmp/get_usage.exp"
-    let expectScriptDst = binDir / "get_usage.exp"
-    if fileExists(expectScriptSrc):
-      copyFile(expectScriptSrc, expectScriptDst)
-      setFilePermissions(expectScriptDst, {fpUserExec, fpUserWrite, fpUserRead, fpGroupRead, fpGroupExec, fpOthersRead, fpOthersExec})
-      echo "✓ Installed usage data script to ", expectScriptDst
-
   echo "✓ Installed to ", binPath
   return true
 
@@ -97,7 +89,7 @@ proc showHelp*() =
   echo ""
   echo "Options:"
   echo "  --install                    Run interactive installer to configure settings.json"
-  echo "  --tag=TEXT                   Prepend [ TEXT ] | at the beginning of the status line"
+  echo "  --tag=TEXT                   Prepend TEXT | at the beginning of the status line"
   echo "  --tag-color=COLOR            Color for the tag. Available colors:"
   echo "                               black, red, green, yellow, blue, magenta, cyan, white,"
   echo "                               gray, bright-red, bright-green, bright-yellow,"
@@ -222,7 +214,7 @@ proc runInstall*(projectsDir: string, claudeConfigDir: string, tag: string = "",
   echo "Configure tag prefix (optional)"
   echo "==============================="
   echo ""
-  echo "You can add a custom tag prefix to your statusline, like [ DEV ] or [ WORK ]"
+  echo "You can add a custom tag prefix to your statusline (e.g., DEV, WORK, [personal])"
   echo ""
   stdout.write("Enter tag prefix (leave empty to skip): ")
   stdout.flushFile()

@@ -28,14 +28,16 @@ The install script will:
 1. Auto-detect existing Claude config directories in your home directory
 2. Prompt you to select which directory to install into
 3. Check if Nim is installed (and offer to install it if not)
-4. Build the binary and install it to `~/.local/bin/`
-5. Install the usage data extraction script (`get_usage.exp`)
+4. Build the binaries (`huc` statusline + `hucd` daemon) and install to `~/.local/bin/`
+5. Install and start the background daemon service (launchd on macOS, systemd on Linux)
 6. Prompt you to configure:
    - Your Claude plan (Free, Pro, Max 5×, or Max 20×)
    - Optional custom tag prefix for the statusline
    - Tag color (if using a custom tag)
    - Display style (emoji icons or text labels)
 7. Configure your selected Claude config directory's `settings.json`
+
+**Fresh Install**: Use `bash install.sh --clear` to clear all previous settings and start fresh.
 
 **Note**: Nim 2.0.0 or higher is required. Visit https://nim-lang.org/install.html for installation instructions.
 
@@ -54,7 +56,18 @@ bash uninstall.sh
 ```
 
 This removes:
-- Binary (`~/.local/bin/heads-up-claude`)
+
+**Daemon architecture (v1.0+):**
+- Statusline binary (`~/.local/bin/huc`)
+- Daemon binary (`~/.local/bin/hucd`)
+- Backward-compat symlink (`~/.local/bin/heads-up-claude`)
+- launchd service (macOS: `~/Library/LaunchAgents/com.headsup.claude.plist`)
+- systemd service (Linux: `~/.config/systemd/user/hucd.service`)
+- Daemon logs (`~/.local/share/hucd/`)
+- Cache directories (`~/.claude/heads-up-cache/`)
+
+**Legacy files (pre-v1.0):**
+- Old binary (`~/.local/bin/heads-up-claude`)
 - Expect script (`~/.local/bin/get_usage.exp`)
 - Config file (`~/.claude/heads_up_config.json`)
 - Cache directory (`$TMPDIR/heads-up-claude`)
@@ -65,13 +78,13 @@ This removes:
 The statusline displays several key metrics to help you manage your Claude Code usage:
 
 ```
-[ personal ] | ~/Development/project | feature-branch | Max 20 | Sonnet 4.5 | 💬 104.6K 65% 🟢 104.0K | 🕐 9/900 1% (5h) | 📅 50.4h/240h 21% (2d3h)
-<custom tag> | <directory>          | <branch>        | <plan> | <model>    | <session tokens>       | <5-hour usage> | <weekly usage>
+personal | ~/Development/project | feature-branch | Max 20 | Sonnet 4.5 | 💬 104.6K 65% 🟢 104.0K | 🕐 9/900 1% (5h) | 📅 50.4h/240h 21% (2d3h)
+<tag>    | <directory>           | <branch>       | <plan> | <model>    | <session tokens>       | <5-hour usage> | <weekly usage>
 ```
 
 ### Components
 
-- **Custom Tag** (optional, customizable color): Personal identifier for this workspace (e.g., "personal", "work", "dev")
+- **Custom Tag** (optional, customizable color): Personal identifier for this workspace (e.g., "personal", "work", "[dev]")
 - **Project Directory** (blue): Current working directory
 - **Git Branch** (magenta): Active git branch if in a repository
 - **Plan Tier** (magenta): Your Claude plan (Free, Pro, Max 5, or Max 20)
@@ -121,16 +134,22 @@ Claude tracks weekly usage hours (session duration, not wall clock time). This s
 
 ## How It Works
 
-The statusline extracts real usage data directly from Claude Code's built-in `/config` interface:
+The statusline uses a two-component daemon architecture for instant rendering:
 
-1. **Automated Extraction**: An expect script (`get_usage.exp`) runs `claude /config` in the background
-2. **Navigation**: The script automatically navigates to the Usage tab
-3. **Data Parsing**: Extracts session and weekly usage percentages and reset times
-4. **Display**: Shows the data in your statusline with calculated time-until-reset
+1. **Background Daemon (`hucd`)**: Runs as a system service (launchd/systemd) and:
+   - Monitors transcript files with incremental reads (no re-reading large files)
+   - Fetches real usage data from Claude's API every 5 minutes
+   - Writes status to `~/.claude/heads-up-cache/status.json`
+   - Hot-reloads configuration changes without restart
 
-**Fallback Mode**: If the automated extraction fails (e.g., Claude not running), the statusline falls back to estimating usage from local transcript files and displays a `~estimates` indicator.
+2. **Statusline Binary (`huc`)**: Called by Claude Code on each refresh and:
+   - Reads pre-computed status from `status.json` (instant, < 5ms)
+   - Renders the statusline with current usage data
+   - Shows warnings if daemon is stale or not running
 
-**Performance**: The usage data extraction runs once per statusline refresh (typically when switching between conversations). It takes ~5-10 seconds but happens asynchronously.
+**Performance**: Statusline rendering is now < 5ms (previously 10+ seconds with large transcripts).
+
+**Fallback Mode**: If the daemon is not running or API credentials are not configured, estimates are calculated from local transcript analysis.
 
 ## Configuration
 
@@ -189,15 +208,27 @@ nimble dev      # Debug build
 ```
 heads-up-claude/
 ├── src/
-│   ├── heads_up_claude.nim    # Main entry point
-│   ├── types.nim              # Type definitions
-│   ├── usage.nim              # Usage extraction and calculation
-│   ├── display.nim            # Statusline formatting
-│   ├── installer.nim          # Installer functions
+│   ├── huc.nim                # Statusline entry point
+│   ├── hucd.nim               # Daemon entry point
+│   ├── shared/
+│   │   └── types.nim          # Shared type definitions
+│   ├── huc/
+│   │   ├── reader.nim         # Status file reader
+│   │   ├── render.nim         # Statusline rendering
+│   │   └── daemon.nim         # Daemon management utilities
+│   ├── hucd/
+│   │   ├── main.nim           # Daemon main loop
+│   │   ├── config.nim         # Config loading and hot-reload
+│   │   ├── watcher.nim        # Transcript file watcher
+│   │   ├── api.nim            # API polling
+│   │   ├── writer.nim         # Status file writer
+│   │   ├── pruner.nim         # Cache pruning
+│   │   └── logger.nim         # Logging utilities
+│   ├── installer.nim          # Interactive installer
 │   └── nim.cfg                # Compiler config
 ├── tests/                     # Test files
-├── get_usage.exp              # Expect script for extracting usage from Claude
-├── install.sh                 # Unified install script
+├── install.sh                 # Installation script
+├── uninstall.sh               # Uninstallation script
 ├── heads_up_claude.nimble     # Package definition
 ├── README.md
 ├── CHANGELOG.md
@@ -220,6 +251,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Version
 
-Current version: **0.2.0** (2025-01-09)
+Current version: **1.0.0** (2026-01-16)
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.

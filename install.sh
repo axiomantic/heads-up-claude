@@ -28,6 +28,8 @@ print_help() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
+    echo "  --clear                     Clear ALL settings and config before installing"
+    echo "                              (removes statusLine config, API credentials, cache)"
     echo "  --claude-config-dir=PATH    Claude config directory"
     echo "                              If not specified, installer will auto-detect"
     echo "                              existing Claude directories and prompt for selection"
@@ -35,6 +37,7 @@ print_help() {
     echo ""
     echo "Examples:"
     echo "  $0                                    # Auto-detect and prompt for selection"
+    echo "  $0 --clear                            # Fresh install, clear all previous config"
     echo "  $0 --claude-config-dir=~/.claude-work # Install with specific config directory"
     echo ""
     echo "Auto-detection:"
@@ -105,19 +108,25 @@ cleanup_all() {
     pkill -9 -f "heads-up-claude" 2>/dev/null || true
     sleep 1
 
-    # Remove legacy files
+    # Remove legacy binaries
     local legacy_files=(
         "$HOME/.local/bin/heads-up-claude"
         "$HOME/.local/bin/get_usage.exp"
     )
     for f in "${legacy_files[@]}"; do
-        if [ -f "$f" ]; then
+        if [ -f "$f" ] && [ ! -L "$f" ]; then
             rm -f "$f"
             print_success "Removed legacy file: $f"
         fi
     done
 
-    # Remove new daemon files
+    # Remove symlink
+    if [ -L "$HOME/.local/bin/heads-up-claude" ]; then
+        rm -f "$HOME/.local/bin/heads-up-claude"
+        print_success "Removed symlink: ~/.local/bin/heads-up-claude"
+    fi
+
+    # Remove new daemon binaries
     local daemon_files=(
         "$HOME/.local/bin/huc"
         "$HOME/.local/bin/hucd"
@@ -140,7 +149,86 @@ cleanup_all() {
         done
     fi
 
+    # Remove daemon log directory
+    if [ -d "$HOME/.local/share/hucd" ]; then
+        rm -rf "$HOME/.local/share/hucd"
+        print_success "Removed daemon logs: ~/.local/share/hucd"
+    fi
+
     print_success "Cleanup complete"
+}
+
+clear_all_config() {
+    # Clear ALL config and settings for a fresh start
+    local config_dir=$1
+    echo ""
+    print_step "Clearing all configuration for fresh install..."
+
+    # Remove statusLine from settings.json
+    local settings_file="$config_dir/settings.json"
+    if [ -f "$settings_file" ]; then
+        if grep -q "statusLine" "$settings_file" 2>/dev/null; then
+            if command -v jq &> /dev/null; then
+                local tmp_file=$(mktemp)
+                jq 'del(.statusLine)' "$settings_file" > "$tmp_file" && mv "$tmp_file" "$settings_file"
+                print_success "Removed statusLine from settings.json"
+            else
+                print_warning "jq not found - please manually remove statusLine from $settings_file"
+            fi
+        fi
+    fi
+
+    # Remove legacy config file (API credentials stored here in old versions)
+    local legacy_config="$config_dir/heads_up_config.json"
+    if [ -f "$legacy_config" ]; then
+        rm -f "$legacy_config"
+        print_success "Removed legacy config: $legacy_config"
+    fi
+
+    # Remove cache directory (includes daemon config, status, transcript cache)
+    local cache_dir="$config_dir/heads-up-cache"
+    if [ -d "$cache_dir" ]; then
+        rm -rf "$cache_dir"
+        print_success "Removed cache directory: $cache_dir"
+    fi
+
+    # Remove legacy temp cache
+    local legacy_cache="${TMPDIR:-/tmp}/heads-up-claude"
+    if [ -d "$legacy_cache" ]; then
+        rm -rf "$legacy_cache"
+        print_success "Removed legacy cache: $legacy_cache"
+    fi
+
+    # Also check common alternate config dirs
+    for alt_dir in "$HOME/.claude" "$HOME/.claude-work"; do
+        if [ "$alt_dir" != "$config_dir" ]; then
+            # Remove statusLine from alternate settings.json
+            local alt_settings="$alt_dir/settings.json"
+            if [ -f "$alt_settings" ] && grep -q "statusLine" "$alt_settings" 2>/dev/null; then
+                if command -v jq &> /dev/null; then
+                    local tmp_file=$(mktemp)
+                    jq 'del(.statusLine)' "$alt_settings" > "$tmp_file" && mv "$tmp_file" "$alt_settings"
+                    print_success "Removed statusLine from $alt_settings"
+                fi
+            fi
+
+            # Remove cache from alternate dirs
+            local alt_cache="$alt_dir/heads-up-cache"
+            if [ -d "$alt_cache" ]; then
+                rm -rf "$alt_cache"
+                print_success "Removed cache: $alt_cache"
+            fi
+
+            # Remove legacy config from alternate dirs
+            local alt_legacy="$alt_dir/heads_up_config.json"
+            if [ -f "$alt_legacy" ]; then
+                rm -f "$alt_legacy"
+                print_success "Removed legacy config: $alt_legacy"
+            fi
+        fi
+    done
+
+    print_success "Configuration cleared"
 }
 
 check_nimble() {
@@ -621,8 +709,13 @@ print_completion() {
 main() {
     # Parse command line arguments
     local skip_detection=false
+    local clear_mode=false
     while [[ $# -gt 0 ]]; do
         case $1 in
+            --clear)
+                clear_mode=true
+                shift
+                ;;
             --claude-config-dir=*)
                 CLAUDE_CONFIG_DIR="${1#*=}"
                 # Expand tilde if present
@@ -646,6 +739,11 @@ main() {
     # Detect Claude config directories if not explicitly provided
     if [ "$skip_detection" = false ]; then
         detect_claude_dirs
+    fi
+
+    # If --clear flag was passed, clear all config before proceeding
+    if [ "$clear_mode" = true ]; then
+        clear_all_config "$CLAUDE_CONFIG_DIR"
     fi
 
     # Check for nimble
