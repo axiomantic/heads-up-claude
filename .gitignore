@@ -20,3 +20,9 @@ nimcache/
 /tmp/
 *.log
 /tests/test_all
+
+# Local build artifact
+/heads-up-claude
+
+# Worktrees
+.worktrees/
