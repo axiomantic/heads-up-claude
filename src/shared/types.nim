@@ -182,19 +182,22 @@ proc toJson*(status: Status): JsonNode =
   }
 
 proc parseOptString(n: JsonNode): Option[string] =
-  if n.isNil or n.kind == JNull: none(string) else: some(n.getStr())
+  if n == nil: return none(string)
+  if n.kind == JNull: return none(string)
+  return some(n.getStr())
 
 proc parseOptInt(n: JsonNode): Option[int] =
-  if n.isNil or n.kind == JNull: none(int) else: some(n.getInt())
+  if n == nil: return none(int)
+  if n.kind == JNull: return none(int)
+  return some(n.getInt())
 
 proc parseOptDateTime(n: JsonNode): Option[DateTime] =
-  if n.isNil or n.kind == JNull:
-    none(DateTime)
-  else:
-    try:
-      some(parse(n.getStr(), "yyyy-MM-dd'T'HH:mm:ss'Z'", utc()))
-    except:
-      none(DateTime)
+  if n == nil: return none(DateTime)
+  if n.kind == JNull: return none(DateTime)
+  try:
+    return some(parse(n.getStr(), "yyyy-MM-dd'T'HH:mm:ss'Z'", utc()))
+  except:
+    return none(DateTime)
 
 proc parseStatus*(j: JsonNode): Status =
   result.version = j["version"].getInt()
