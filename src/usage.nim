@@ -1,16 +1,35 @@
 import std/[json, os, times, streams, options, osproc, strutils]
 import types
 
+const
+  MAX_DIRECT_READ_BYTES = 10 * 1024 * 1024  # 10MB - files larger than this use tail
+
 proc getFirstTimestampAndContextTokens*(transcriptPath: string): (Option[DateTime], Option[DateTime], int, int, int, int) =
   try:
     if not fileExists(transcriptPath):
       return (none(DateTime), none(DateTime), 0, 0, 0, 0)
 
-    let stream = newFileStream(transcriptPath, fmRead)
-    if stream.isNil:
-      return (none(DateTime), none(DateTime), 0, 0, 0, 0)
+    let fileSize = getFileSize(transcriptPath)
+    debugLog("Transcript size: " & $(fileSize div 1024) & "KB")
 
-    defer: stream.close()
+    # For large files, use tail to only read the last portion
+    # This is much faster than reading 400MB line by line
+    var lines: seq[string]
+    if fileSize > MAX_DIRECT_READ_BYTES:
+      debugLog("Large file detected, using tail for last 2000 lines")
+      let (output, exitCode) = execCmdEx("tail -n 2000 " & quoteShell(transcriptPath))
+      if exitCode == 0:
+        lines = output.splitLines()
+      else:
+        return (none(DateTime), none(DateTime), 0, 0, 0, 0)
+    else:
+      let stream = newFileStream(transcriptPath, fmRead)
+      if stream.isNil:
+        return (none(DateTime), none(DateTime), 0, 0, 0, 0)
+      defer: stream.close()
+      var line: string
+      while stream.readLine(line):
+        lines.add(line)
 
     var firstTimestamp = none(DateTime)
     var lastTimestamp = none(DateTime)
@@ -18,9 +37,10 @@ proc getFirstTimestampAndContextTokens*(transcriptPath: string): (Option[DateTim
     var lastCacheReadTokens = 0
     var lastNewTokens = 0
     var messageCount = 0
-    var line: string
 
-    while stream.readLine(line):
+    for line in lines:
+      if line.len == 0:
+        continue
       try:
         let entry = parseJson(line)
 
@@ -60,7 +80,8 @@ proc getFirstTimestampAndContextTokens*(transcriptPath: string): (Option[DateTim
     let contextTokens = lastCacheReadTokens + lastNewTokens
 
     return (firstTimestamp, lastTimestamp, contextTokens, lastCacheReadTokens, tokensAfterLastSummary, messageCount)
-  except:
+  except Exception as e:
+    debugLog("getFirstTimestampAndContextTokens error: " & e.msg)
     return (none(DateTime), none(DateTime), 0, 0, 0, 0)
 
 proc loadPlanConfig*(claudeConfigDir: string): PlanLimits =
@@ -169,6 +190,140 @@ proc getSessionDurationInWindow(transcriptPath: string, windowStart: DateTime): 
   except:
     return 0
 
+type
+  ApiCredentials* = object
+    sessionKey*: string
+    orgId*: string
+
+proc loadApiCredentials*(claudeConfigDir: string): Option[ApiCredentials] =
+  ## Load API credentials from heads_up_config.json
+  let configPath = claudeConfigDir / "heads_up_config.json"
+
+  if not fileExists(configPath):
+    return none(ApiCredentials)
+
+  try:
+    let config = parseFile(configPath)
+    let sessionKey = config.getOrDefault("session_key").getStr("")
+    let orgId = config.getOrDefault("org_id").getStr("")
+
+    if sessionKey.len > 0 and orgId.len > 0:
+      return some(ApiCredentials(sessionKey: sessionKey, orgId: orgId))
+    return none(ApiCredentials)
+  except:
+    return none(ApiCredentials)
+
+type
+  ApiResult* = enum
+    ApiSuccess,
+    ApiAuthFailed,  # 401/403 - credentials expired
+    ApiNetworkError,
+    ApiParseError
+
+const
+  CURL_TIMEOUT_SECONDS = 10
+
+proc fetchUsageFromApi*(creds: ApiCredentials): (int, string, int, string, ApiResult) =
+  ## Fetch usage data from Claude.ai API using curl
+  ## Returns: (session%, sessionReset, weekly%, weeklyReset, result)
+  debugLog("fetchUsageFromApi: starting")
+  try:
+    let url = "https://claude.ai/api/organizations/" & creds.orgId & "/usage"
+    let curlCmd = "curl -s --max-time " & $CURL_TIMEOUT_SECONDS & " -w '\\n%{http_code}' -H 'Cookie: sessionKey=" & creds.sessionKey & "' -H 'Accept: application/json' '" & url & "'"
+    debugLog("fetchUsageFromApi: executing curl (timeout=" & $CURL_TIMEOUT_SECONDS & "s)")
+
+    let (output, exitCode) = execCmdEx(curlCmd, options = {poUsePath})
+    debugLog("fetchUsageFromApi: curl exitCode=" & $exitCode)
+
+    if exitCode != 0:
+      debugLog("fetchUsageFromApi: curl failed with exit code " & $exitCode)
+      return (0, "", 0, "", ApiNetworkError)
+
+    # Parse output - last line is HTTP status code
+    let lines = output.strip().split('\n')
+    if lines.len < 2:
+      debugLog("fetchUsageFromApi: unexpected output format, lines=" & $lines.len)
+      return (0, "", 0, "", ApiParseError)
+
+    let httpCode = try: parseInt(lines[^1]) except: 0
+    let body = lines[0..^2].join("\n")
+    debugLog("fetchUsageFromApi: httpCode=" & $httpCode)
+
+    # Check for auth failures
+    if httpCode == 401 or httpCode == 403:
+      debugLog("fetchUsageFromApi: auth failed (expired credentials)")
+      return (0, "", 0, "", ApiAuthFailed)
+
+    if httpCode < 200 or httpCode >= 300:
+      debugLog("fetchUsageFromApi: HTTP error " & $httpCode)
+      return (0, "", 0, "", ApiNetworkError)
+
+    let data = parseJson(body)
+
+    var sessionPercent = 0
+    var sessionReset = ""
+    var weeklyPercent = 0
+    var weeklyReset = ""
+
+    # Parse 5-hour utilization
+    if data.hasKey("five_hour"):
+      let fiveHour = data["five_hour"]
+      if fiveHour.hasKey("utilization"):
+        let util = fiveHour["utilization"]
+        # Handle both int and float
+        if util.kind == JInt:
+          sessionPercent = util.getInt()
+        elif util.kind == JFloat:
+          sessionPercent = int(util.getFloat())
+
+      if fiveHour.hasKey("resets_at"):
+        let resetTime = fiveHour["resets_at"].getStr()
+        if resetTime.len > 0:
+          try:
+            let parsed = parse(resetTime, "yyyy-MM-dd'T'HH:mm:ss'.'fff'Z'", utc())
+            let remaining = parsed - now().utc()
+            if remaining.inSeconds > 0:
+              let hours = remaining.inHours
+              let mins = remaining.inMinutes mod 60
+              if hours > 0:
+                sessionReset = $hours & "h" & $mins & "m"
+              else:
+                sessionReset = $mins & "m"
+          except:
+            discard
+
+    # Parse weekly utilization
+    if data.hasKey("seven_day"):
+      let sevenDay = data["seven_day"]
+      if sevenDay.hasKey("utilization"):
+        let util = sevenDay["utilization"]
+        if util.kind == JInt:
+          weeklyPercent = util.getInt()
+        elif util.kind == JFloat:
+          weeklyPercent = int(util.getFloat())
+
+      if sevenDay.hasKey("resets_at"):
+        let resetTime = sevenDay["resets_at"].getStr()
+        if resetTime.len > 0:
+          try:
+            let parsed = parse(resetTime, "yyyy-MM-dd'T'HH:mm:ss'.'fff'Z'", utc())
+            let remaining = parsed - now().utc()
+            if remaining.inSeconds > 0:
+              let days = remaining.inDays
+              let hours = remaining.inHours mod 24
+              if days > 0:
+                weeklyReset = $days & "d" & $hours & "h"
+              else:
+                weeklyReset = $hours & "h"
+          except:
+            discard
+
+    debugLog("fetchUsageFromApi: success session=" & $sessionPercent & "% weekly=" & $weeklyPercent & "%")
+    return (sessionPercent, sessionReset, weeklyPercent, weeklyReset, ApiSuccess)
+  except Exception as e:
+    debugLog("fetchUsageFromApi: exception " & e.msg)
+    return (0, "", 0, "", ApiParseError)
+
 proc estimateUsageFromTranscripts*(projectsDir: string, limits: PlanLimits): (int, int, string, float, int, string) =
   var messages5hr = 0
   var percent5hr = 0
@@ -248,226 +403,247 @@ proc estimateUsageFromTranscripts*(projectsDir: string, limits: PlanLimits): (in
   return (messages5hr, percent5hr, time5hr, hoursWeekly, percentWeekly, timeWeekly)
 
 const
-  CACHE_TTL_SECONDS = 60  # Cache valid for 60 seconds
-  LOCK_STALE_SECONDS = 90  # Consider lock stale after 90 seconds (expect script timeout + buffer)
-  CACHE_VERY_STALE_SECONDS = 5 * 60 * 60  # 5 hours - show warning if cache is this old
+  CACHE_SOFT_TTL_SECONDS = 60   # Trigger background refresh after 60s
+  CACHE_MAX_AGE_SECONDS = 300   # After 5 minutes, cache is too stale
 
-proc isLockStale(lockPath: string): bool =
-  ## Check if lock directory exists and is stale (too old)
-  let lockDir = lockPath & ".d"
-  if not dirExists(lockDir):
-    return false
-  try:
-    let lockInfo = getFileInfo(lockDir)
-    let age = now().utc() - lockInfo.lastWriteTime.utc()
-    return age.inSeconds > LOCK_STALE_SECONDS
-  except:
-    return false
-
-proc cleanStaleLock(lockPath: string) =
-  ## Remove lock directory if it's stale and kill any orphaned processes
-  let lockDir = lockPath & ".d"
-  if isLockStale(lockPath):
-    try:
-      # First, try to kill any orphaned process from this lock
-      let pidFile = lockDir / "pid"
-      if fileExists(pidFile):
-        let pidStr = readFile(pidFile).strip()
-        if pidStr.len > 0:
-          # Kill the process and its children
-          # Use SIGTERM first, then SIGKILL
-          discard execCmdEx("pkill -TERM -P " & pidStr & " 2>/dev/null; kill -TERM " & pidStr & " 2>/dev/null")
-          sleep(500)
-          discard execCmdEx("pkill -KILL -P " & pidStr & " 2>/dev/null; kill -KILL " & pidStr & " 2>/dev/null")
-      removeDir(lockDir)
-    except:
-      # Even if process kill fails, try to remove the lock dir
-      try:
-        removeDir(lockDir)
-      except:
-        discard
-
-proc readCache(cachePath: string): (int, string, int, string, bool, int64) =
-  ## Read cached usage data. Returns (session%, sessionReset, weekly%, weeklyReset, isValid, ageSeconds)
+proc readCache(cachePath: string): (int, string, int, string, bool, bool, bool, int64, string) =
+  ## Read cached usage data.
+  ## Returns (session%, sessionReset, weekly%, weeklyReset, isFresh, isUsable, authFailed, ageSeconds, sessionKeyHash)
+  ## - isFresh: cache is within soft TTL, no refresh needed
+  ## - isUsable: cache can be returned while refreshing in background
+  ## - authFailed: cached auth failure (don't retry API)
+  ## - sessionKeyHash: hash of session key when cache was written (to detect key changes)
+  debugLog("readCache: checking " & cachePath)
   if not fileExists(cachePath):
-    return (0, "", 0, "", false, -1)
+    debugLog("readCache: file not found")
+    return (0, "", 0, "", false, false, false, -1, "")
 
   try:
     let cacheInfo = getFileInfo(cachePath)
     let age = now().utc() - cacheInfo.lastWriteTime.utc()
     let ageSeconds = age.inSeconds
-    let isValid = ageSeconds < CACHE_TTL_SECONDS
+    let isFresh = ageSeconds < CACHE_SOFT_TTL_SECONDS
+    let isUsable = ageSeconds < CACHE_MAX_AGE_SECONDS
 
     let cache = parseFile(cachePath)
+    let authFailed = cache.getOrDefault("authFailed").getBool(false)
+    let cachedKeyHash = cache.getOrDefault("sessionKeyHash").getStr("")
+
+    debugLog("readCache: age=" & $ageSeconds & "s fresh=" & $isFresh & " usable=" & $isUsable & " authFailed=" & $authFailed)
+
     return (
       cache["sessionPercent"].getInt(),
       cache["sessionResetTime"].getStr(),
       cache["weeklyPercent"].getInt(),
       cache["weeklyResetTime"].getStr(),
-      isValid,
-      ageSeconds
+      isFresh,
+      isUsable,
+      authFailed,
+      ageSeconds,
+      cachedKeyHash
     )
-  except:
-    return (0, "", 0, "", false, -1)
+  except Exception as e:
+    debugLog("readCache: exception " & e.msg)
+    return (0, "", 0, "", false, false, false, -1, "")
 
-proc spawnBackgroundRefresh(scriptPath, cachePath, lockPath: string) =
+proc hashSessionKey(key: string): string =
+  ## Simple hash of session key (just use last 8 chars to detect changes)
+  if key.len > 8:
+    result = key[^8..^1]
+  else:
+    result = key
+
+proc spawnBackgroundRefresh(cacheDir, cachePath: string, creds: ApiCredentials) =
   ## Spawn a background process to refresh the cache without blocking.
-  ## Uses startProcess with poDaemon to fully detach.
-  try:
-    # Create a shell script with timeout protection and atomic locking
-    let refreshScript = getTempDir() / "heads-up-claude" / "refresh.sh"
-    let script = """#!/bin/bash
-set -o pipefail
-TIMEOUT=30  # Kill expect script after 30 seconds
-KILL_AFTER=5  # Force kill 5 seconds after SIGTERM
+  let lockPath = cacheDir / "refresh.lock"
 
-# PID file for tracking (allows cleanup of orphans)
-PID_DIR="$2.d"
-PID_FILE="$PID_DIR/pid"
+  # Check if refresh already in progress (lock file exists and is recent)
+  if fileExists(lockPath):
+    try:
+      let lockInfo = getFileInfo(lockPath)
+      let lockAge = now().utc() - lockInfo.lastWriteTime.utc()
+      if lockAge.inSeconds < 30:  # Lock is fresh, refresh in progress
+        debugLog("spawnBackgroundRefresh: refresh already in progress")
+        return
+      # Lock is stale, remove it
+      removeFile(lockPath)
+    except:
+      discard
 
-# Atomic lock using mkdir (atomic on POSIX)
-# mkdir fails if dir already exists, so only one process wins
-if ! mkdir "$PID_DIR" 2>/dev/null; then
-  exit 0  # Another process has the lock
-fi
+  debugLog("spawnBackgroundRefresh: spawning background refresh")
 
-# Write our PID for potential external cleanup
-echo $$ > "$PID_FILE"
+  # Create a shell command that:
+  # 1. Creates lock file
+  # 2. Calls curl
+  # 3. Parses response and updates cache
+  # 4. Removes lock file
+  let url = "https://claude.ai/api/organizations/" & creds.orgId & "/usage"
+  let script = """
+    set -e
+    LOCK_FILE="$1"
+    CACHE_FILE="$2"
+    URL="$3"
+    SESSION_KEY="$4"
 
-# Cleanup function: kills entire process group and removes lock
-cleanup() {
-  # Kill any remaining child processes in our process group
-  pkill -P $$ 2>/dev/null || true
-  # Also kill by PID file in case process group kill missed something
-  if [ -f "$PID_FILE" ]; then
-    child_pids=$(pgrep -P $$ 2>/dev/null || true)
-    for pid in $child_pids; do
-      kill -TERM "$pid" 2>/dev/null || true
-      sleep 0.5
-      kill -KILL "$pid" 2>/dev/null || true
-    done
-  fi
-  rm -rf "$PID_DIR"
-}
+    # Create lock
+    echo $$ > "$LOCK_FILE"
+    trap "rm -f '$LOCK_FILE'" EXIT
 
-# Trap all exit signals to ensure cleanup
-trap cleanup EXIT INT TERM HUP
+    # Fetch data
+    RESPONSE=$(curl -s --max-time 10 -w '\n%{http_code}' \
+      -H "Cookie: sessionKey=$SESSION_KEY" \
+      -H "Accept: application/json" \
+      "$URL" 2>/dev/null) || exit 1
 
-# Run expect script with timeout and process group kill
-# Use setsid to create new session so timeout can kill the whole group
-if command -v timeout &> /dev/null; then
-  # GNU timeout (Linux): use --kill-after to SIGKILL if SIGTERM ignored
-  # Run in foreground mode so signals propagate correctly
-  output=$(timeout --foreground --kill-after=$KILL_AFTER $TIMEOUT "$1" 2>/dev/null)
-  exit_code=$?
-else
-  # macOS: no timeout command, use explicit signal handling
-  # Use a temp file for output since we need to run in background
-  tmp_output="$3.out.$$"
+    HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
-  # Run expect script in background, redirect output to temp file
-  "$1" > "$tmp_output" 2>/dev/null &
-  expect_pid=$!
+    # Only update cache on success
+    if [ "$HTTP_CODE" = "200" ]; then
+      # Parse JSON and extract values (simple grep-based parsing)
+      FIVE_HOUR=$(echo "$BODY" | grep -o '"five_hour"[^}]*}' | head -1)
+      SEVEN_DAY=$(echo "$BODY" | grep -o '"seven_day"[^}]*}' | head -1)
 
-  # Set up watchdog timer
-  (
-    sleep $TIMEOUT
-    # First try SIGTERM
-    kill -TERM $expect_pid 2>/dev/null
-    sleep $KILL_AFTER
-    # Then SIGKILL if still running
-    kill -KILL $expect_pid 2>/dev/null
-  ) &
-  watchdog_pid=$!
+      SESSION_PCT=$(echo "$FIVE_HOUR" | grep -o '"utilization"[^,}]*' | grep -o '[0-9]*' | head -1)
+      WEEKLY_PCT=$(echo "$SEVEN_DAY" | grep -o '"utilization"[^,}]*' | grep -o '[0-9]*' | head -1)
 
-  # Wait for expect script to finish
-  wait $expect_pid 2>/dev/null
-  exit_code=$?
+      SESSION_PCT=${SESSION_PCT:-0}
+      WEEKLY_PCT=${WEEKLY_PCT:-0}
 
-  # Kill watchdog (it's no longer needed)
-  kill $watchdog_pid 2>/dev/null
-  wait $watchdog_pid 2>/dev/null
-
-  # Read output from temp file
-  if [ -f "$tmp_output" ]; then
-    output=$(cat "$tmp_output")
-    rm -f "$tmp_output"
-  fi
-fi
-
-if [ $exit_code -ne 0 ]; then
-  exit 1
-fi
-
-# Parse session percentage
-session_pct=$(echo "$output" | grep -A1 "Current session" | tail -1 | grep -oE '[0-9]+' | head -1)
-session_pct=${session_pct:-0}
-
-# Parse weekly percentage
-weekly_pct=$(echo "$output" | grep -A1 "Current week" | tail -1 | grep -oE '[0-9]+' | head -1)
-weekly_pct=${weekly_pct:-0}
-
-# Write cache atomically (write to temp, then move)
-tmp_cache="$3.tmp.$$"
-cat > "$tmp_cache" << EOF
-{"sessionPercent":$session_pct,"sessionResetTime":"","weeklyPercent":$weekly_pct,"weeklyResetTime":""}
+      # Write cache atomically
+      TMP_CACHE="${CACHE_FILE}.tmp.$$"
+      cat > "$TMP_CACHE" << EOF
+{"sessionPercent":$SESSION_PCT,"sessionResetTime":"","weeklyPercent":$WEEKLY_PCT,"weeklyResetTime":""}
 EOF
-mv "$tmp_cache" "$3"
-"""
-    writeFile(refreshScript, script)
-    setFilePermissions(refreshScript, {fpUserExec, fpUserWrite, fpUserRead})
+      mv "$TMP_CACHE" "$CACHE_FILE"
+    fi
+  """
 
-    # Fire and forget - startProcess returns immediately, we don't wait
-    discard startProcess(
-      refreshScript,
-      args = [scriptPath, lockPath, cachePath],
-      options = {poUsePath, poDaemon}
-    )
-  except:
-    discard
+  try:
+    # Write script to temp file and execute in background
+    let scriptPath = cacheDir / "refresh.sh"
+    writeFile(scriptPath, script)
 
-proc getRealUsageData*(): (int, string, int, string, bool) =
-  ## Get real usage data from claude /config - NON-BLOCKING.
+    # Use shell to run in background with nohup
+    let cmd = "nohup /bin/bash " & quoteShell(scriptPath) & " " &
+              quoteShell(lockPath) & " " &
+              quoteShell(cachePath) & " " &
+              quoteShell(url) & " " &
+              quoteShell(creds.sessionKey) & " >/dev/null 2>&1 &"
+    discard execShellCmd(cmd)
+  except Exception as e:
+    debugLog("spawnBackgroundRefresh: exception " & e.msg)
+
+type
+  UsageStatus* = enum
+    UsageOk,           # Fresh data from API
+    UsageStale,        # Using stale cache
+    UsageAuthExpired,  # API credentials expired - need refresh
+    UsageNoCredentials,# No API credentials configured
+    UsageEstimates     # Falling back to transcript estimates
+
+proc getRealUsageData*(claudeConfigDir: string): (int, string, int, string, UsageStatus) =
+  ## Get real usage data from Claude.ai API with smart caching.
+  ## - Fresh cache (< 60s): return immediately
+  ## - Stale cache (60s-300s): return immediately + background refresh
+  ## - Very stale/missing (> 300s): blocking API call
   ##
-  ## Always returns immediately with cached data (even if stale).
-  ## If cache is stale, spawns a background daemon to refresh it.
-  ## Next statusline update will get fresh data.
-  ##
-  ## Returns: (session%, sessionReset, weekly%, weeklyReset, isVeryStale)
-  ## isVeryStale is true if cache is >5 hours old or missing
-  ##
-  ## Guards against stacking:
-  ## - Lock file prevents multiple concurrent fetches
-  ## - Stale locks (>90s) are automatically cleaned up
-  ## - 30s timeout kills hung expect scripts
+  ## Returns: (session%, sessionReset, weekly%, weeklyReset, status)
+  debugLog("getRealUsageData: starting")
 
-  let scriptPath = getAppDir() / "get_usage.exp"
-  if not fileExists(scriptPath):
-    return (0, "", 0, "", true)
-
-  let cacheDir = getTempDir() / "heads-up-claude"
+  # Use claude config dir for cache (persists across reboots, not cleaned up)
+  let cacheDir = claudeConfigDir / "heads-up-cache"
   let cachePath = cacheDir / "usage_cache.json"
-  let lockPath = cacheDir / "usage.lock"
+  debugLog("getRealUsageData: cacheDir=" & cacheDir)
 
   # Ensure cache directory exists
   try:
     createDir(cacheDir)
   except:
-    return (0, "", 0, "", true)
+    discard
 
-  # Clean up stale locks (from crashed/timed-out processes)
-  cleanStaleLock(lockPath)
+  # Load API credentials
+  debugLog("getRealUsageData: loading API credentials")
+  let credsOpt = loadApiCredentials(claudeConfigDir)
+  if credsOpt.isNone:
+    debugLog("getRealUsageData: no API credentials configured")
+    return (0, "", 0, "", UsageNoCredentials)
 
-  # Read cache (may be stale or missing)
-  let (cachedSession, cachedSessionReset, cachedWeekly, cachedWeeklyReset, cacheValid, ageSeconds) = readCache(cachePath)
+  let creds = credsOpt.get()
+  debugLog("getRealUsageData: credentials found")
 
-  # Determine if data is very stale (>5 hours old or missing)
-  let isVeryStale = ageSeconds < 0 or ageSeconds > CACHE_VERY_STALE_SECONDS
+  # Check cache state
+  let (cachedSession, cachedSessionReset, cachedWeekly, cachedWeeklyReset, isFresh, isUsable, authFailed, _, cachedKeyHash) = readCache(cachePath)
 
-  # If cache is stale and no refresh in progress, spawn background refresh
-  # Lock is a directory (for atomic creation via mkdir)
-  if not cacheValid and not dirExists(lockPath & ".d"):
-    spawnBackgroundRefresh(scriptPath, cachePath, lockPath)
+  # Check if credentials changed since cache was written
+  let currentKeyHash = hashSessionKey(creds.sessionKey)
+  let credentialsChanged = cachedKeyHash.len > 0 and cachedKeyHash != currentKeyHash
 
-  # Always return immediately with whatever we have
-  return (cachedSession, cachedSessionReset, cachedWeekly, cachedWeeklyReset, isVeryStale)
+  # Case 0: Cached auth failure - don't hammer API with bad credentials
+  # BUT if credentials changed, try the new ones
+  if authFailed and not credentialsChanged:
+    debugLog("getRealUsageData: cached auth failure (same credentials), not retrying API")
+    return (0, "", 0, "", UsageAuthExpired)
+
+  if credentialsChanged:
+    debugLog("getRealUsageData: credentials changed, will retry API")
+
+  # Case 1: Fresh cache - return immediately, no refresh needed
+  if isFresh:
+    debugLog("getRealUsageData: cache is fresh, returning")
+    return (cachedSession, cachedSessionReset, cachedWeekly, cachedWeeklyReset, UsageOk)
+
+  # Case 2: Usable but stale cache - return immediately + background refresh
+  if isUsable and (cachedSession > 0 or cachedWeekly > 0):
+    debugLog("getRealUsageData: cache usable but stale, spawning background refresh")
+    spawnBackgroundRefresh(cacheDir, cachePath, creds)
+    return (cachedSession, cachedSessionReset, cachedWeekly, cachedWeeklyReset, UsageOk)
+
+  # Case 3: No usable cache - must block on API call
+  debugLog("getRealUsageData: no usable cache, blocking on API call")
+  let (sessionPct, sessionReset, weeklyPct, weeklyReset, apiResult) = fetchUsageFromApi(creds)
+
+  case apiResult
+  of ApiSuccess:
+    debugLog("getRealUsageData: API success, updating cache")
+    try:
+      let tmpCache = cachePath & ".tmp." & $getCurrentProcessId()
+      let cacheJson = %*{
+        "sessionPercent": sessionPct,
+        "sessionResetTime": sessionReset,
+        "weeklyPercent": weeklyPct,
+        "weeklyResetTime": weeklyReset,
+        "authFailed": false,
+        "sessionKeyHash": currentKeyHash
+      }
+      writeFile(tmpCache, $cacheJson)
+      moveFile(tmpCache, cachePath)
+    except:
+      discard
+    return (sessionPct, sessionReset, weeklyPct, weeklyReset, UsageOk)
+
+  of ApiAuthFailed:
+    debugLog("getRealUsageData: API auth failed, caching failure")
+    # Cache the auth failure so we don't keep hammering
+    try:
+      let tmpCache = cachePath & ".tmp." & $getCurrentProcessId()
+      let cacheJson = %*{
+        "sessionPercent": 0,
+        "sessionResetTime": "",
+        "weeklyPercent": 0,
+        "weeklyResetTime": "",
+        "authFailed": true,
+        "sessionKeyHash": currentKeyHash
+      }
+      writeFile(tmpCache, $cacheJson)
+      moveFile(tmpCache, cachePath)
+    except:
+      discard
+    return (0, "", 0, "", UsageAuthExpired)
+
+  of ApiNetworkError, ApiParseError:
+    debugLog("getRealUsageData: API error")
+    # Return stale cache if available
+    if cachedSession > 0 or cachedWeekly > 0:
+      return (cachedSession, cachedSessionReset, cachedWeekly, cachedWeeklyReset, UsageStale)
+    return (0, "", 0, "", UsageEstimates)

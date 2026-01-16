@@ -205,17 +205,11 @@ install_nimble() {
 
 build_binaries() {
     echo ""
-    print_step "Installing dependencies..."
-    echo ""
-
-    nimble install -y
-
-    echo ""
     print_step "Building statusline binary..."
     echo ""
 
     # Build statusline binary - show all output
-    if ! nim c -d:release -o:/tmp/heads-up-claude src/heads_up_claude.nim; then
+    if ! nim c -d:release -o:/tmp/huc src/heads_up_claude.nim; then
         echo ""
         print_error "Statusline build failed"
         exit 1
@@ -242,11 +236,11 @@ run_statusline_installer() {
     print_step "Configuring statusline..."
     echo ""
 
-    if /tmp/heads-up-claude --install --claude-config-dir="$claude_config_dir"; then
-        rm -f /tmp/heads-up-claude
+    if /tmp/huc --install --claude-config-dir="$claude_config_dir"; then
+        rm -f /tmp/huc
         return 0
     else
-        rm -f /tmp/heads-up-claude
+        rm -f /tmp/huc
         echo ""
         print_error "Statusline configuration failed"
         exit 1
@@ -327,6 +321,27 @@ detect_claude_dirs() {
     echo ""
 }
 
+run_api_setup() {
+    local claude_config_dir=$1
+    echo ""
+    print_step "Setup real-time usage data (optional)"
+    echo ""
+    print_info "For accurate usage data, you can configure API credentials."
+    print_info "This fetches real usage stats from Claude.ai instead of estimates."
+    echo ""
+    read -p "Setup API credentials now? [Y/n] " -n 1 -r
+    echo ""
+
+    if [[ $REPLY =~ ^[Nn]$ ]]; then
+        print_info "Skipped API setup. You can run it later with:"
+        echo "    ~/.local/bin/heads-up-claude --setup-api"
+        return 0
+    fi
+
+    echo ""
+    ~/.local/bin/heads-up-claude --setup-api --claude-config-dir="$claude_config_dir" || true
+}
+
 print_completion() {
     local claude_config_dir=$1
     echo ""
@@ -336,8 +351,6 @@ print_completion() {
     echo ""
     print_success "Statusline binary: ~/.local/bin/heads-up-claude"
     print_success "Settings configured: $claude_config_dir/settings.json"
-    echo ""
-    print_info "Usage estimates are based on local conversation activity"
     echo ""
 }
 
@@ -385,6 +398,9 @@ main() {
 
     # Run the statusline installer
     run_statusline_installer "$CLAUDE_CONFIG_DIR"
+
+    # Offer API setup for real-time usage data
+    run_api_setup "$CLAUDE_CONFIG_DIR"
 
     # Print completion
     print_completion "$CLAUDE_CONFIG_DIR"

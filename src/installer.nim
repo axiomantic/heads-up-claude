@@ -1,4 +1,4 @@
-import std/[os, json, strutils]
+import std/[os, json, strutils, browsers]
 
 proc installBinary*(): bool =
   echo ""
@@ -8,12 +8,12 @@ proc installBinary*(): bool =
 
   when defined(windows):
     let binDir = getEnv("LOCALAPPDATA") / "Programs"
-    let binPath = binDir / "heads-up-claude.exe"
+    let binPath = binDir / "huc.exe"
     createDir(binDir)
     copyFile(currentExe, binPath)
   else:
     let binDir = getEnv("HOME") / ".local" / "bin"
-    let binPath = binDir / "heads-up-claude"
+    let binPath = binDir / "huc"
     createDir(binDir)
     copyFile(currentExe, binPath)
     setFilePermissions(binPath, {fpUserExec, fpUserWrite, fpUserRead, fpGroupRead, fpGroupExec, fpOthersRead, fpOthersExec})
@@ -36,9 +36,9 @@ proc installStatusLine*(useEmoji: bool, claudeConfigDir: string, tag: string = "
   let settingsPath = claudeConfigDir / "settings.json"
 
   when defined(windows):
-    let binPath = getEnv("LOCALAPPDATA") / "Programs" / "heads-up-claude.exe"
+    let binPath = getEnv("LOCALAPPDATA") / "Programs" / "huc.exe"
   else:
-    let binPath = getEnv("HOME") / ".local" / "bin" / "heads-up-claude"
+    let binPath = getEnv("HOME") / ".local" / "bin" / "huc"
 
   var settings: JsonNode
   if fileExists(settingsPath):
@@ -87,16 +87,14 @@ proc showHelp*() =
   echo "Heads Up Claude"
   echo "==============="
   echo ""
-  echo "A custom statusline for Claude Code that shows token usage, rate limits, and weekly usage estimates."
-  echo ""
-  echo "Usage estimates are based on local conversation activity and reset times are calculated"
-  echo "from conversation timestamps."
+  echo "A custom statusline for Claude Code that shows token usage, rate limits, and weekly usage."
   echo ""
   echo "Usage:"
-  echo "  heads-up-claude [OPTIONS]"
+  echo "  huc [OPTIONS]"
   echo ""
   echo "Options:"
   echo "  --install                    Run interactive installer to configure settings.json"
+  echo "  --setup-api                  Setup API credentials for real-time usage data"
   echo "  --tag=TEXT                   Prepend [ TEXT ] | at the beginning of the status line"
   echo "  --tag-color=COLOR            Color for the tag. Available colors:"
   echo "                               black, red, green, yellow, blue, magenta, cyan, white,"
@@ -105,6 +103,7 @@ proc showHelp*() =
   echo "  --claude-config-dir=PATH     Claude config directory"
   echo "                               (default: $CLAUDE_CONFIG_DIR or ~/.claude)"
   echo "  --no-emoji                   Use descriptive text instead of emoji"
+  echo "  --debug                      Enable debug logging to stderr"
   echo "  --help                       Show this help message"
   echo ""
   echo "Environment Variables:"
@@ -114,15 +113,15 @@ proc showHelp*() =
   echo "Examples:"
   echo "  # Run installer"
   when defined(windows):
-    echo "  heads-up-claude --install"
+    echo "  huc --install"
   else:
-    echo "  ~/.local/bin/heads-up-claude --install"
+    echo "  ~/.local/bin/huc --install"
   echo ""
   echo "  # Use in settings.json with custom options"
   when defined(windows):
-    echo "  heads-up-claude --tag=\"DEV\" --tag-color=green --no-emoji"
+    echo "  huc --tag=\"DEV\" --tag-color=green --no-emoji"
   else:
-    echo "  ~/.local/bin/heads-up-claude --tag=\"DEV\" --tag-color=green --no-emoji"
+    echo "  ~/.local/bin/huc --tag=\"DEV\" --tag-color=green --no-emoji"
   echo ""
   echo "For more information, see https://github.com/axiomantic/heads-up-claude"
 
@@ -143,7 +142,7 @@ proc runInstall*(projectsDir: string, claudeConfigDir: string, tag: string = "",
       let settings = parseJson(readFile(settingsPath))
       if settings.hasKey("statusLine") and settings["statusLine"].hasKey("command"):
         let currentCommand = settings["statusLine"]["command"].getStr()
-        if "heads-up-claude" in currentCommand:
+        if "huc" in currentCommand or "heads-up-claude" in currentCommand:
           echo "Existing configuration found:"
           echo "  ", currentCommand
           echo ""
@@ -267,3 +266,91 @@ proc runInstall*(projectsDir: string, claudeConfigDir: string, tag: string = "",
     quit(1)
 
   installStatusLine(useEmoji, claudeConfigDir, tagPrefix, tagColorChoice)
+
+const ORG_SNIPPET* = """
+// Paste this in browser console to get org_id
+fetch('/api/organizations').then(r=>r.json()).then(o=>console.log(o[0].uuid))
+"""
+
+proc runApiSetup*(claudeConfigDir: string) =
+  ## Interactive setup for Claude.ai API credentials
+  echo ""
+  echo "╔══════════════════════════════════════════════════════════════╗"
+  echo "║            Setup Real-Time Usage Data (API)                  ║"
+  echo "╚══════════════════════════════════════════════════════════════╝"
+  echo ""
+  echo "This will configure your Claude.ai API credentials for"
+  echo "accurate, real-time usage data in your statusline."
+  echo ""
+  echo "Step 1: Opening claude.ai in your browser..."
+  echo ""
+
+  # Open browser
+  openDefaultBrowser("https://claude.ai")
+
+  echo "Step 2: Open Developer Tools (F12 or Cmd+Option+I)"
+  echo ""
+  echo "Step 3: Go to Application tab > Cookies > claude.ai"
+  echo "        Find 'sessionKey' and copy its value"
+  echo "        (starts with 'sk-ant-sid01-...')"
+  echo ""
+  stdout.write("Step 4: Paste your sessionKey here: ")
+  stdout.flushFile()
+
+  let sessionKey = stdin.readLine().strip()
+  if sessionKey.len == 0 or not sessionKey.startsWith("sk-ant-"):
+    echo ""
+    echo "✗ Invalid session key. Should start with 'sk-ant-sid01-...'"
+    quit(1)
+
+  echo ""
+  echo "Step 5: Go to Console tab and paste this script:"
+  echo ""
+  echo "─────────────────────────────────────────────────────────────────"
+  echo ORG_SNIPPET
+  echo "─────────────────────────────────────────────────────────────────"
+  echo ""
+  stdout.write("Step 6: Paste the org_id here: ")
+  stdout.flushFile()
+
+  let orgId = stdin.readLine().strip()
+  if orgId.len == 0 or orgId.len < 30:
+    echo ""
+    echo "✗ Invalid org_id. Should be a UUID like 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'"
+    quit(1)
+
+  # Load existing config or create new
+  let configPath = claudeConfigDir / "heads_up_config.json"
+  var config: JsonNode
+
+  if fileExists(configPath):
+    try:
+      config = parseFile(configPath)
+    except:
+      config = newJObject()
+  else:
+    config = newJObject()
+    # Set defaults if new config
+    config["plan"] = %"pro"
+    config["five_hour_messages"] = %45
+    config["weekly_hours_min"] = %40
+
+  # Update with API credentials
+  config["session_key"] = %sessionKey
+  config["org_id"] = %orgId
+
+  # Ensure config directory exists
+  createDir(claudeConfigDir)
+
+  # Save atomically
+  let tmpPath = configPath & ".tmp"
+  writeFile(tmpPath, config.pretty())
+  moveFile(tmpPath, configPath)
+
+  echo ""
+  echo "✓ API credentials saved to ", configPath
+  echo ""
+  echo "Your statusline will now show real-time usage data from Claude!"
+  echo ""
+  echo "Note: Session keys expire periodically. If you see 'credentials expired'"
+  echo "      in your statusline, run this command again to refresh."

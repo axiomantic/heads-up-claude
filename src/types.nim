@@ -18,3 +18,10 @@ const
 
 var
   gUseEmoji* = true
+  gDebug* = false
+
+proc debugLog*(msg: string) =
+  ## Write debug message to stderr when debug mode is enabled
+  if gDebug:
+    stderr.writeLine("[DEBUG] " & msg)
+    stderr.flushFile()

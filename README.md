@@ -7,11 +7,11 @@ A statusline for Claude Code showing real-time token usage, rate limits, and wee
 ## Features
 
 - **Token Usage Tracking**: Real-time conversation context size with cache read tokens
-- **5-Hour Rate Limit**: Live session usage percentage and reset time from Claude's internal data
-- **Weekly Usage**: Live weekly usage percentage and reset time from Claude's internal data
-- **Automatic Data Extraction**: Reads usage directly from Claude's `/config` interface
-- **Local-Only**: No browser extensions, no external API calls
-- **Fallback Estimates**: Uses local transcript analysis if real data is unavailable
+- **5-Hour Rate Limit**: Live session usage percentage and reset time from Claude's API
+- **Weekly Usage**: Live weekly usage percentage and reset time from Claude's API
+- **API-Based Data**: Fetches accurate usage data directly from Claude.ai (with optional credentials)
+- **Privacy-Focused**: Credentials stored locally, no third-party services
+- **Fallback Estimates**: Uses local transcript analysis if API unavailable
 - **Customizable Display**: Choose between emoji icons or descriptive text
 
 ## Installation
@@ -59,6 +59,50 @@ This removes:
 - Config file (`~/.claude/heads_up_config.json`)
 - Cache directory (`$TMPDIR/heads-up-claude`)
 - `statusLine` entry from `~/.claude/settings.json` (requires `jq`)
+
+## Real-Time Usage Data (Recommended)
+
+For accurate, real-time usage data from Claude's servers, run the setup wizard:
+
+```bash
+~/.local/bin/heads-up-claude --setup-api
+```
+
+This will:
+1. Open claude.ai in your browser
+2. Show you a JavaScript snippet to run in the browser console
+3. Wait for you to paste the credentials
+4. Save them to your config file
+
+### Credential Expiration
+
+Session keys expire periodically. When this happens, your statusline will show:
+
+```
+[credentials expired: heads-up-claude --setup-api]
+```
+
+Just run the setup command again to refresh your credentials.
+
+### Multiple Claude Configs
+
+If you use multiple Claude config directories (e.g., work and personal), specify the directory:
+
+```bash
+heads-up-claude --setup-api --claude-config-dir=~/.claude-work
+```
+
+### How it Works
+
+With API credentials configured:
+- Usage data is fetched directly from `claude.ai/api/organizations/{orgId}/usage`
+- Shows real 5-hour and weekly utilization percentages from Anthropic's servers
+- Cached for 60 seconds to avoid excessive API calls
+- Falls back to transcript-based estimates if API fails
+
+### Without API Credentials
+
+The statusline will show `~estimates` and use local transcript analysis to approximate your usage. This works but is less accurate than the API-based approach.
 
 ## Understanding the Statusline
 
@@ -121,16 +165,16 @@ Claude tracks weekly usage hours (session duration, not wall clock time). This s
 
 ## How It Works
 
-The statusline extracts real usage data directly from Claude Code's built-in `/config` interface:
+The statusline extracts real usage data using a priority-based approach:
 
-1. **Automated Extraction**: An expect script (`get_usage.exp`) runs `claude /config` in the background
-2. **Navigation**: The script automatically navigates to the Usage tab
-3. **Data Parsing**: Extracts session and weekly usage percentages and reset times
-4. **Display**: Shows the data in your statusline with calculated time-until-reset
+1. **API Method (Preferred)**: If you've configured API credentials (see above), the statusline fetches usage data directly from `https://claude.ai/api/organizations/{orgId}/usage`
+   - Returns actual 5-hour and weekly utilization percentages
+   - Includes accurate reset times
+   - Cached for 60 seconds to avoid excessive API calls
 
-**Fallback Mode**: If the automated extraction fails (e.g., Claude not running), the statusline falls back to estimating usage from local transcript files and displays a `~estimates` indicator.
+2. **Fallback: Transcript Estimation**: If API credentials aren't configured or the API fails, the statusline estimates usage from local transcript files in `~/.claude/projects/` and displays a `~estimates` indicator.
 
-**Performance**: The usage data extraction runs once per statusline refresh (typically when switching between conversations). It takes ~5-10 seconds but happens asynchronously.
+**Performance**: API calls are fast (~100-200ms) and cached. The statusline updates on each prompt.
 
 ## Configuration
 
