@@ -21,6 +21,9 @@ nimcache/
 *.log
 /tests/test_all
 /tests/test_shared_types
+/tests/test_huc
+/tests/test_huc_*
+/tests/test_hucd_*
 
 # Local build artifact
 /heads-up-claude
