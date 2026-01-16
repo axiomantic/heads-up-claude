@@ -251,6 +251,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Version
 
-Current version: **1.0.0** (2026-01-16)
+Current version: **0.3.0** (2026-01-16)
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.

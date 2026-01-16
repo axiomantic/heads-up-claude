@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - 2026-01-16
+## [0.3.0] - 2026-01-16
 
 ### Changed (BREAKING)
 - **Architecture overhaul**: Split from single binary into daemon+statusline two-component system
@@ -91,6 +91,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Weekly reset time configuration (default: Wednesday 6pm Central)
 - Command-line options: `--plan`, `--reset-time`, `--no-emoji`, `--install`, `--help`
 
-[1.0.0]: https://github.com/axiomantic/heads-up-claude/releases/tag/v1.0.0
+[0.3.0]: https://github.com/axiomantic/heads-up-claude/releases/tag/v0.3.0
 [0.2.0]: https://github.com/axiomantic/heads-up-claude/releases/tag/v0.2.0
 [0.1.0]: https://github.com/axiomantic/heads-up-claude/releases/tag/v0.1.0
