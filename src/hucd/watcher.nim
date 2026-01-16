@@ -1,6 +1,6 @@
 ## Transcript file watching and incremental processing
 
-import std/[os, json, times, streams, tables, strutils]
+import std/[os, json, times, tables, strutils]
 import ../shared/types
 
 proc processTranscript*(transcriptPath: string, entry: var TranscriptEntry) =
