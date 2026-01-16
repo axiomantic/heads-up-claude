@@ -72,6 +72,77 @@ print_info() {
     echo -e "${INFO} $1"
 }
 
+cleanup_all() {
+    echo ""
+    print_step "Cleaning up existing installation..."
+
+    # Stop daemon - platform specific
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS: unload launchd plist
+        local plist_path="$HOME/Library/LaunchAgents/com.headsup.claude.plist"
+        if [ -f "$plist_path" ]; then
+            print_step "Unloading launchd service..."
+            launchctl unload "$plist_path" 2>/dev/null || true
+            rm -f "$plist_path"
+            print_success "Removed launchd plist"
+        fi
+    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        # Linux: stop and disable systemd service
+        local service_path="$HOME/.config/systemd/user/hucd.service"
+        if [ -f "$service_path" ]; then
+            print_step "Stopping systemd service..."
+            systemctl --user stop hucd.service 2>/dev/null || true
+            systemctl --user disable hucd.service 2>/dev/null || true
+            rm -f "$service_path"
+            systemctl --user daemon-reload 2>/dev/null || true
+            print_success "Removed systemd service"
+        fi
+    fi
+
+    # Kill orphaned processes
+    print_step "Stopping any running processes..."
+    pkill -9 -f "hucd" 2>/dev/null || true
+    pkill -9 -f "heads-up-claude" 2>/dev/null || true
+    sleep 1
+
+    # Remove legacy files
+    local legacy_files=(
+        "$HOME/.local/bin/heads-up-claude"
+        "$HOME/.local/bin/get_usage.exp"
+    )
+    for f in "${legacy_files[@]}"; do
+        if [ -f "$f" ]; then
+            rm -f "$f"
+            print_success "Removed legacy file: $f"
+        fi
+    done
+
+    # Remove new daemon files
+    local daemon_files=(
+        "$HOME/.local/bin/huc"
+        "$HOME/.local/bin/hucd"
+    )
+    for f in "${daemon_files[@]}"; do
+        if [ -f "$f" ]; then
+            rm -f "$f"
+            print_success "Removed: $f"
+        fi
+    done
+
+    # Remove nimble shims (if installed via nimble)
+    local nimble_bin="$HOME/.nimble/bin"
+    if [ -d "$nimble_bin" ]; then
+        for shim in "huc" "hucd" "heads-up-claude"; do
+            if [ -f "$nimble_bin/$shim" ]; then
+                rm -f "$nimble_bin/$shim"
+                print_success "Removed nimble shim: $nimble_bin/$shim"
+            fi
+        done
+    fi
+
+    print_success "Cleanup complete"
+}
+
 check_nimble() {
     print_step "Checking for nimble command..."
     if command -v nimble &> /dev/null; then
@@ -211,30 +282,228 @@ build_binaries() {
     nimble install -y
 
     echo ""
-    print_step "Building statusline binary..."
+    print_step "Building huc (statusline)..."
     echo ""
 
-    # Build statusline binary - show all output
-    if ! nim c -d:release -o:/tmp/heads-up-claude src/heads_up_claude.nim; then
+    # Build huc (statusline binary)
+    if ! nim c -d:release -o:/tmp/huc src/huc.nim; then
         echo ""
-        print_error "Statusline build failed"
+        print_error "huc build failed"
         exit 1
     fi
 
-    print_success "Statusline binary built"
+    print_success "huc (statusline) built"
 
-    # Copy expect script to tmp for installation
     echo ""
-    print_step "Copying usage data script..."
-    if [ -f "$SCRIPT_DIR/get_usage.exp" ]; then
-        cp "$SCRIPT_DIR/get_usage.exp" /tmp/get_usage.exp
-        chmod +x /tmp/get_usage.exp
-        print_success "Usage data script prepared"
+    print_step "Building hucd (daemon)..."
+    echo ""
+
+    # Build hucd (daemon binary)
+    if ! nim c -d:release -o:/tmp/hucd src/hucd.nim; then
+        echo ""
+        print_error "hucd build failed"
+        exit 1
+    fi
+
+    print_success "hucd (daemon) built"
+}
+
+install_binaries() {
+    echo ""
+    print_step "Installing binaries..."
+
+    local bin_dir="$HOME/.local/bin"
+    mkdir -p "$bin_dir"
+
+    # Install huc
+    cp /tmp/huc "$bin_dir/huc"
+    chmod +x "$bin_dir/huc"
+    print_success "Installed huc to $bin_dir/huc"
+
+    # Install hucd
+    cp /tmp/hucd "$bin_dir/hucd"
+    chmod +x "$bin_dir/hucd"
+    print_success "Installed hucd to $bin_dir/hucd"
+
+    # Create backward-compatible symlink: heads-up-claude -> huc
+    ln -sf "$bin_dir/huc" "$bin_dir/heads-up-claude"
+    print_success "Created symlink: heads-up-claude -> huc"
+
+    # Clean up temp files
+    rm -f /tmp/huc /tmp/hucd
+}
+
+create_daemon_config() {
+    local claude_config_dir=$1
+    echo ""
+    print_step "Creating daemon configuration..."
+
+    local cache_dir="$claude_config_dir/heads-up-cache"
+    mkdir -p "$cache_dir"
+
+    local config_path="$cache_dir/hucd.json"
+
+    # Create default config
+    cat > "$config_path" << EOF
+{
+  "version": 1,
+  "config_dirs": ["$claude_config_dir"],
+  "scan_interval_minutes": 5,
+  "api_interval_minutes": 5,
+  "prune_interval_minutes": 30,
+  "debug": false
+}
+EOF
+
+    print_success "Created daemon config: $config_path"
+}
+
+install_launchd() {
+    local claude_config_dir=$1
+    echo ""
+    print_step "Installing launchd service (macOS)..."
+
+    local plist_dir="$HOME/Library/LaunchAgents"
+    local plist_path="$plist_dir/com.headsup.claude.plist"
+    local bin_path="$HOME/.local/bin/hucd"
+    local config_path="$claude_config_dir/heads-up-cache/hucd.json"
+    local log_dir="$claude_config_dir/heads-up-cache/logs"
+
+    mkdir -p "$plist_dir"
+    mkdir -p "$log_dir"
+
+    # Create plist
+    cat > "$plist_path" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.headsup.claude</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$bin_path</string>
+        <string>--config=$config_path</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>$log_dir/hucd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>$log_dir/hucd.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>$HOME</string>
+    </dict>
+</dict>
+</plist>
+EOF
+
+    print_success "Created launchd plist: $plist_path"
+
+    # Load the service
+    print_step "Loading launchd service..."
+    launchctl unload "$plist_path" 2>/dev/null || true
+    if launchctl load "$plist_path"; then
+        print_success "launchd service loaded"
     else
-        print_warning "get_usage.exp not found - usage data may be limited"
+        print_error "Failed to load launchd service"
+        return 1
     fi
 }
 
+install_systemd() {
+    local claude_config_dir=$1
+    echo ""
+    print_step "Installing systemd service (Linux)..."
+
+    local service_dir="$HOME/.config/systemd/user"
+    local service_path="$service_dir/hucd.service"
+    local bin_path="$HOME/.local/bin/hucd"
+    local config_path="$claude_config_dir/heads-up-cache/hucd.json"
+
+    mkdir -p "$service_dir"
+
+    # Create service file
+    cat > "$service_path" << EOF
+[Unit]
+Description=Heads Up Claude Daemon
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=$bin_path --config=$config_path
+Restart=always
+RestartSec=10
+Environment=HOME=$HOME
+
+[Install]
+WantedBy=default.target
+EOF
+
+    print_success "Created systemd service: $service_path"
+
+    # Reload and enable
+    print_step "Enabling systemd service..."
+    systemctl --user daemon-reload
+    if systemctl --user enable hucd.service; then
+        print_success "systemd service enabled"
+    else
+        print_error "Failed to enable systemd service"
+        return 1
+    fi
+
+    # Start the service
+    print_step "Starting systemd service..."
+    if systemctl --user start hucd.service; then
+        print_success "systemd service started"
+    else
+        print_error "Failed to start systemd service"
+        return 1
+    fi
+}
+
+install_service() {
+    local claude_config_dir=$1
+    echo ""
+    print_step "Installing platform service..."
+
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        install_launchd "$claude_config_dir"
+    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        install_systemd "$claude_config_dir"
+    else
+        print_warning "Unsupported platform for service installation: $OSTYPE"
+        print_info "You will need to start hucd manually"
+        return 1
+    fi
+}
+
+wait_for_status() {
+    local claude_config_dir=$1
+    local status_path="$claude_config_dir/heads-up-cache/status.json"
+    local timeout=30
+    local elapsed=0
+
+    echo ""
+    print_step "Waiting for daemon to produce status..."
+
+    while [ $elapsed -lt $timeout ]; do
+        if [ -f "$status_path" ]; then
+            print_success "Daemon is running and producing status"
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    print_warning "Daemon did not produce status within ${timeout}s"
+    print_info "Check logs at: $claude_config_dir/heads-up-cache/logs/"
+    return 1
+}
 
 run_statusline_installer() {
     local claude_config_dir=$1
@@ -242,13 +511,17 @@ run_statusline_installer() {
     print_step "Configuring statusline..."
     echo ""
 
-    if /tmp/heads-up-claude --install --claude-config-dir="$claude_config_dir"; then
-        rm -f /tmp/heads-up-claude
-        return 0
+    local huc_bin="$HOME/.local/bin/huc"
+    if [ -x "$huc_bin" ]; then
+        if "$huc_bin" --install --claude-config-dir="$claude_config_dir"; then
+            return 0
+        else
+            echo ""
+            print_error "Statusline configuration failed"
+            exit 1
+        fi
     else
-        rm -f /tmp/heads-up-claude
-        echo ""
-        print_error "Statusline configuration failed"
+        print_error "huc binary not found at $huc_bin"
         exit 1
     fi
 }
@@ -334,10 +607,14 @@ print_completion() {
     echo -e "${CYAN}║${NC}  Installation Complete!                                  ${CYAN}║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    print_success "Statusline binary: ~/.local/bin/heads-up-claude"
+    print_success "Statusline binary: ~/.local/bin/huc"
+    print_success "Daemon binary: ~/.local/bin/hucd"
+    print_success "Backward-compat symlink: ~/.local/bin/heads-up-claude -> huc"
     print_success "Settings configured: $claude_config_dir/settings.json"
+    print_success "Daemon config: $claude_config_dir/heads-up-cache/hucd.json"
     echo ""
-    print_info "Usage estimates are based on local conversation activity"
+    print_info "The daemon (hucd) runs in the background to track usage"
+    print_info "Restart Claude Code to see the new statusline"
     echo ""
 }
 
@@ -380,10 +657,25 @@ main() {
         install_nimble "$pkg_manager"
     fi
 
-    # Build binary
+    # Cleanup existing installation
+    cleanup_all
+
+    # Build binaries
     build_binaries
 
-    # Run the statusline installer
+    # Install binaries
+    install_binaries
+
+    # Create daemon configuration
+    create_daemon_config "$CLAUDE_CONFIG_DIR"
+
+    # Install platform service (launchd/systemd)
+    install_service "$CLAUDE_CONFIG_DIR"
+
+    # Wait for daemon to produce status
+    wait_for_status "$CLAUDE_CONFIG_DIR"
+
+    # Run the statusline installer (configures settings.json)
     run_statusline_installer "$CLAUDE_CONFIG_DIR"
 
     # Print completion

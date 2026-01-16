@@ -4,6 +4,7 @@
 import std/[os, json, parseopt, strutils, options, paths, terminal, osproc]
 import shared/types
 import huc/[reader, render, daemon]
+import installer
 
 proc showHelp() =
   echo "huc - Heads Up Claude Statusline"
@@ -95,11 +96,16 @@ proc main() =
     echo getDaemonLogs()
     return
 
-  # Install and setup-api delegate to existing installer module
-  # (to be connected in integration)
-  if installMode or setupApiMode:
-    # For now, show message
-    echo "Please use the install.sh script or ~/.local/bin/heads-up-claude for setup"
+  # Install mode - run interactive installer
+  if installMode:
+    let projectsDir = claudeConfigDir / "projects"
+    runInstall(projectsDir, claudeConfigDir, tag, tagColor)
+    return
+
+  # Setup API credentials
+  if setupApiMode:
+    echo "API credential setup not yet implemented"
+    echo "Please configure manually in: " & claudeConfigDir / "heads_up_config.json"
     return
 
   # Main statusline mode - read stdin for context, read status.json for usage
