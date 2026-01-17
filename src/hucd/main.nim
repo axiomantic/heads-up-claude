@@ -131,7 +131,8 @@ proc buildStatus*(state: DaemonState, configDir: string): Status =
 
   for path, entry in state.transcriptCache.transcripts:
     if path.startsWith(projectsDir):
-      if mostRecentPath.isNone or entry.lastChecked > state.transcriptCache.transcripts[mostRecentPath.get()].lastChecked:
+      # Select by file mtime (most recently modified), not lastChecked (when daemon processed)
+      if mostRecentPath.isNone or entry.mtime > state.transcriptCache.transcripts[mostRecentPath.get()].mtime:
         mostRecentPath = some(path)
         mostRecentTokens = entry.tokensAfterSummary + entry.lastCacheReadTokens
         mostRecentCache = entry.lastCacheReadTokens

@@ -71,6 +71,12 @@ proc main() =
   # Install signal handlers
   installSignalHandlers(state)
 
+  # Load transcript cache from first config dir (if exists)
+  # This avoids the 10+ minute initial scan on restart
+  if config.configDirs.len > 0:
+    let cacheDir = config.configDirs[0] / "heads-up-cache"
+    state.transcriptCache = loadTranscriptCache(cacheDir)
+
   # Write initial status immediately (before slow scan)
   # This allows the install script to verify daemon is running
   log(INFO, "Writing initial status")
@@ -79,7 +85,7 @@ proc main() =
     let status = buildStatus(state, configDir)
     writeStatus(cacheDir, status)
 
-  # Initial scan (can be slow with many transcripts)
+  # Initial scan (updates cache incrementally - fast if cache was loaded)
   log(INFO, "Running initial scan")
   for configDir in config.configDirs:
     let projectsDir = configDir / "projects"
