@@ -1,6 +1,6 @@
 ## Daemon main loop and state management
 
-import std/[os, times, tables, monotimes, options, posix, json, strutils]
+import std/[os, times, tables, monotimes, options, posix, json, strutils, sets]
 import ../shared/types
 import config, watcher, api, writer, pruner
 
@@ -117,6 +117,34 @@ proc loadPlanLimits(configDir: string): PlanStatus =
   except:
     discard
 
+proc calculateWeeklyHours*(state: DaemonState, configDir: string): (float, string) =
+  ## Calculate hours of activity in the past 7 days from transcript mtimes
+  ## Returns (hours, resetTime) where resetTime is when the weekly window resets
+  let projectsDir = configDir / "projects"
+  let now = getTime()
+  let weekAgo = now - initDuration(days = 7)
+
+  # Track unique hours (day + hour combinations) to estimate usage time
+  var activeHours: HashSet[int64] = initHashSet[int64]()
+
+  for path, entry in state.transcriptCache.transcripts:
+    if path.startsWith(projectsDir):
+      # Only count transcripts modified in the past 7 days
+      if entry.mtime >= weekAgo:
+        # Round mtime to hour boundary and add to set
+        let hourTimestamp = entry.mtime.toUnix() div 3600 * 3600
+        activeHours.incl(hourTimestamp)
+
+  let hours = activeHours.len.float
+
+  # Calculate when the 7-day window resets (oldest hour falls off)
+  # For simplicity, show time until midnight Sunday (week boundary)
+  let nowDt = now.utc()
+  let daysUntilSunday = (7 - ord(nowDt.weekday)) mod 7
+  let resetTime = if daysUntilSunday == 0: "today" else: $daysUntilSunday & "d"
+
+  return (hours, resetTime)
+
 proc buildStatus*(state: DaemonState, configDir: string): Status =
   ## Build status object for a config directory
   let plan = loadPlanLimits(configDir)
@@ -142,15 +170,22 @@ proc buildStatus*(state: DaemonState, configDir: string): Status =
   let compactThreshold = 160000
   let contextPercent = if mostRecentTokens > 0: (mostRecentTokens * 100) div compactThreshold else: 0
 
-  # Build estimates from transcripts (simplified - real impl would scan all recent)
+  # Calculate weekly hours from transcript activity
+  let (hoursWeekly, weeklyReset) = calculateWeeklyHours(state, configDir)
+  let weeklyPercent = if plan.weeklyHoursMin > 0:
+    min(100, int((hoursWeekly / plan.weeklyHoursMin.float) * 100))
+  else:
+    0
+
+  # Build estimates from transcripts
   let estimates = EstimateStatus(
     calculatedAt: now().utc(),
     messages5hr: mostRecentMessages,
     sessionPercent: if plan.fiveHourMessages > 0: min(100, (mostRecentMessages * 100) div plan.fiveHourMessages) else: 0,
     sessionReset: "",
-    hoursWeekly: 0.0,
-    weeklyPercent: 0,
-    weeklyReset: ""
+    hoursWeekly: hoursWeekly,
+    weeklyPercent: weeklyPercent,
+    weeklyReset: weeklyReset
   )
 
   result = Status(
