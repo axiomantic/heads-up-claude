@@ -12,8 +12,8 @@ proc showHelp() =
   echo "  hucd [OPTIONS]"
   echo ""
   echo "Options:"
-  echo "  --config=PATH    Path to hucd.json config file"
-  echo "                   (default: ~/.claude/heads-up-cache/hucd.json)"
+  echo "  --config=PATH    Path to config.json file"
+  echo "                   (default: ~/.config/hucd/config.json)"
   echo "  --debug          Enable debug logging"
   echo "  --help           Show this help"
   echo ""
@@ -25,7 +25,7 @@ proc showHelp() =
   echo "Config changes are hot-reloaded (no restart needed)."
 
 proc main() =
-  var configPath = getHomeDir() / ".claude" / "heads-up-cache" / "hucd.json"
+  var configPath = getHomeDir() / ".config" / "hucd" / "config.json"
   var showHelpMode = false
 
   var p = initOptParser()
@@ -71,7 +71,15 @@ proc main() =
   # Install signal handlers
   installSignalHandlers(state)
 
-  # Initial scan
+  # Write initial status immediately (before slow scan)
+  # This allows the install script to verify daemon is running
+  log(INFO, "Writing initial status")
+  for configDir in config.configDirs:
+    let cacheDir = configDir / "heads-up-cache"
+    let status = buildStatus(state, configDir)
+    writeStatus(cacheDir, status)
+
+  # Initial scan (can be slow with many transcripts)
   log(INFO, "Running initial scan")
   for configDir in config.configDirs:
     let projectsDir = configDir / "projects"

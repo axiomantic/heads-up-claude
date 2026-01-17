@@ -426,13 +426,34 @@ create_daemon_config() {
     echo ""
     print_step "Creating daemon configuration..."
 
-    local cache_dir="$claude_config_dir/heads-up-cache"
-    mkdir -p "$cache_dir"
+    # Central config location (not tied to any specific Claude config)
+    local config_dir="$HOME/.config/hucd"
+    local config_path="$config_dir/config.json"
+    local log_dir="$config_dir/logs"
 
-    local config_path="$cache_dir/hucd.json"
+    mkdir -p "$config_dir"
+    mkdir -p "$log_dir"
 
-    # Create default config
-    cat > "$config_path" << EOF
+    # Also ensure the Claude config's cache dir exists (for status.json output)
+    mkdir -p "$claude_config_dir/heads-up-cache"
+
+    if [ -f "$config_path" ]; then
+        # Config exists - add this directory if not already present
+        if command -v jq &> /dev/null; then
+            if jq -e ".config_dirs | index(\"$claude_config_dir\")" "$config_path" > /dev/null 2>&1; then
+                print_info "Directory already in daemon config: $claude_config_dir"
+            else
+                local tmp_file=$(mktemp)
+                jq ".config_dirs += [\"$claude_config_dir\"]" "$config_path" > "$tmp_file" && mv "$tmp_file" "$config_path"
+                print_success "Added directory to daemon config: $claude_config_dir"
+            fi
+        else
+            print_warning "jq not found - cannot update existing config"
+            print_info "Please manually add $claude_config_dir to $config_path"
+        fi
+    else
+        # Create new config
+        cat > "$config_path" << EOF
 {
   "version": 1,
   "config_dirs": ["$claude_config_dir"],
@@ -442,8 +463,8 @@ create_daemon_config() {
   "debug": false
 }
 EOF
-
-    print_success "Created daemon config: $config_path"
+        print_success "Created daemon config: $config_path"
+    fi
 }
 
 install_launchd() {
@@ -454,8 +475,8 @@ install_launchd() {
     local plist_dir="$HOME/Library/LaunchAgents"
     local plist_path="$plist_dir/com.headsup.claude.plist"
     local bin_path="$HOME/.local/bin/hucd"
-    local config_path="$claude_config_dir/heads-up-cache/hucd.json"
-    local log_dir="$claude_config_dir/heads-up-cache/logs"
+    local config_path="$HOME/.config/hucd/config.json"
+    local log_dir="$HOME/.config/hucd/logs"
 
     mkdir -p "$plist_dir"
     mkdir -p "$log_dir"
@@ -511,7 +532,7 @@ install_systemd() {
     local service_dir="$HOME/.config/systemd/user"
     local service_path="$service_dir/hucd.service"
     local bin_path="$HOME/.local/bin/hucd"
-    local config_path="$claude_config_dir/heads-up-cache/hucd.json"
+    local config_path="$HOME/.config/hucd/config.json"
 
     mkdir -p "$service_dir"
 
@@ -620,14 +641,26 @@ detect_claude_dirs() {
     print_step "Detecting Claude config directories..."
     echo ""
 
-    # Find directories containing history.jsonl or CLAUDE.md
-    # Search one level deep in home directory, including hidden directories
+    # Search 1 level deep in $HOME for directories containing Claude markers
     local found_dirs=()
 
-    # Use find to search for directories containing the marker files
-    while IFS= read -r dir; do
-        found_dirs+=("$dir")
-    done < <(find "$HOME" -maxdepth 2 -type f \( -name "history.jsonl" -o -name "CLAUDE.md" \) -exec dirname {} \; 2>/dev/null | sort -u)
+    for dir in "$HOME"/.*; do
+        [ -d "$dir" ] || continue
+        # Skip Trash directory (may contain deleted Claude files)
+        [[ "$dir" == */.Trash ]] && continue
+
+        # Check for Claude-specific markers (require multiple signals)
+        local score=0
+        [ -d "$dir/projects" ] && score=$((score + 2))  # Strong signal
+        [ -f "$dir/settings.json" ] && grep -q '"env":\|"model":\|"statusLine":' "$dir/settings.json" 2>/dev/null && score=$((score + 2))
+        [ -f "$dir/CLAUDE.md" ] && score=$((score + 1))
+        [ -d "$dir/heads-up-cache" ] && score=$((score + 2))  # We installed here before
+
+        # Require score >= 2 to be considered a Claude config dir
+        if [ $score -ge 2 ]; then
+            found_dirs+=("$dir")
+        fi
+    done
 
     if [ ${#found_dirs[@]} -eq 0 ]; then
         print_info "No existing Claude config directories detected"
@@ -699,9 +732,11 @@ print_completion() {
     print_success "Daemon binary: ~/.local/bin/hucd"
     print_success "Backward-compat symlink: ~/.local/bin/heads-up-claude -> huc"
     print_success "Settings configured: $claude_config_dir/settings.json"
-    print_success "Daemon config: $claude_config_dir/heads-up-cache/hucd.json"
+    print_success "Daemon config: ~/.config/hucd/config.json"
+    print_success "Status output: $claude_config_dir/heads-up-cache/status.json"
     echo ""
-    print_info "The daemon (hucd) runs in the background to track usage"
+    print_info "The daemon monitors all configured Claude directories"
+    print_info "Run install again with a different directory to add more"
     print_info "Restart Claude Code to see the new statusline"
     echo ""
 }

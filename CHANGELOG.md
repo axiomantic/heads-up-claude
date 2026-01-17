@@ -33,10 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - macOS: launchd service (`~/Library/LaunchAgents/com.headsup.claude.plist`)
   - Linux: systemd user service (`~/.config/systemd/user/hucd.service`)
 - **Multi-config support**: Monitor multiple Claude config directories simultaneously
-- **New cache files**:
-  - `~/.claude/heads-up-cache/status.json` - Current usage stats
-  - `~/.claude/heads-up-cache/hucd.json` - Daemon configuration
-  - `~/.claude/heads-up-cache/transcripts.json` - Transcript offsets for incremental reads
+- **New file locations**:
+  - `~/.config/hucd/config.json` - Central daemon configuration (shared across all accounts)
+  - `~/.config/hucd/logs/` - Daemon logs
+  - `<config_dir>/heads-up-cache/status.json` - Per-account usage stats
+  - `<config_dir>/heads-up-cache/transcripts.json` - Transcript offsets for incremental reads
 
 ### Fixed
 - Eliminated blocking API calls during statusline refresh

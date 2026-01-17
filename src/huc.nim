@@ -104,8 +104,7 @@ proc main() =
 
   # Setup API credentials
   if setupApiMode:
-    echo "API credential setup not yet implemented"
-    echo "Please configure manually in: " & claudeConfigDir / "heads_up_config.json"
+    runApiSetup(claudeConfigDir)
     return
 
   # Main statusline mode - read stdin for context, read status.json for usage

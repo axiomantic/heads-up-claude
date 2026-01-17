@@ -16,27 +16,15 @@ detect_claude_dirs() {
         found_dirs+=("$CLAUDE_CONFIG_DIR")
     fi
 
-    # Common locations
-    for dir in "$HOME/.claude" "$HOME/.claude-work" "$HOME/.config/claude"; do
-        if [ -d "$dir" ] && [[ ! " ${found_dirs[*]} " =~ " ${dir} " ]]; then
+    # Search 1 level deep in $HOME for directories containing Claude markers
+    for dir in "$HOME"/.*; do
+        [ -d "$dir" ] || continue
+        [[ ! " ${found_dirs[*]} " =~ " ${dir} " ]] || continue
+        # Check if directory contains Claude markers
+        if [ -f "$dir/CLAUDE.md" ] || [ -f "$dir/settings.json" ] || [ -d "$dir/projects" ]; then
             found_dirs+=("$dir")
         fi
     done
-
-    # Search for directories containing Claude markers
-    while IFS= read -r -d '' dir; do
-        local parent_dir=$(dirname "$dir")
-        if [[ ! " ${found_dirs[*]} " =~ " ${parent_dir} " ]]; then
-            found_dirs+=("$parent_dir")
-        fi
-    done < <(find "$HOME" -maxdepth 3 -name "CLAUDE.md" -print0 2>/dev/null || true)
-
-    while IFS= read -r -d '' dir; do
-        local parent_dir=$(dirname "$dir")
-        if [[ ! " ${found_dirs[*]} " =~ " ${parent_dir} " ]]; then
-            found_dirs+=("$parent_dir")
-        fi
-    done < <(find "$HOME" -maxdepth 3 -name "settings.json" -print0 2>/dev/null | xargs -0 grep -l "statusLine" 2>/dev/null || true)
 
     echo "${found_dirs[@]}"
 }
@@ -49,6 +37,7 @@ HUCD_BINARY="$HOME/.local/bin/hucd"
 SYMLINK_BINARY="$HOME/.local/bin/heads-up-claude"
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/com.headsup.claude.plist"
 SYSTEMD_SERVICE="$HOME/.config/systemd/user/hucd.service"
+DAEMON_CONFIG_DIR="$HOME/.config/hucd"
 DAEMON_LOG_DIR="$HOME/.local/share/hucd"
 
 # Legacy files
@@ -118,6 +107,13 @@ if [ -f "$SYSTEMD_SERVICE" ]; then
     fi
 else
     echo "  [ ] systemd service: (not found)"
+fi
+
+if [ -d "$DAEMON_CONFIG_DIR" ]; then
+    echo "  [x] Daemon config: ~/.config/hucd/"
+    found_something=true
+else
+    echo "  [ ] Daemon config: (not found)"
 fi
 
 if [ -d "$DAEMON_LOG_DIR" ]; then
@@ -256,6 +252,14 @@ for config_dir in "${CLAUDE_DIRS[@]}"; do
         fi
     fi
 done
+
+# ─────────────────────────────────────────────────────────────────
+# Remove central daemon config directory
+# ─────────────────────────────────────────────────────────────────
+if [ -d "$DAEMON_CONFIG_DIR" ]; then
+    rm -rf "$DAEMON_CONFIG_DIR"
+    echo "  Removed daemon config: ~/.config/hucd/"
+fi
 
 # ─────────────────────────────────────────────────────────────────
 # Remove legacy files

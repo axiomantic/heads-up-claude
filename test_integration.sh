@@ -26,8 +26,9 @@ cat > "$TEST_DIR/.claude/heads_up_config.json" << 'EOF'
 {"plan": "pro", "five_hour_messages": 45, "weekly_hours_min": 40}
 EOF
 
-# Create minimal daemon config
-cat > "$TEST_DIR/.claude/heads-up-cache/hucd.json" << EOF
+# Create minimal daemon config (new central location)
+mkdir -p "$TEST_DIR/.config/hucd"
+cat > "$TEST_DIR/.config/hucd/config.json" << EOF
 {
   "version": 1,
   "config_dirs": ["$TEST_DIR/.claude"],
@@ -46,7 +47,7 @@ EOF
 
 # Start daemon in background
 echo "Starting daemon..."
-HOME="$TEST_DIR" /tmp/hucd --config="$TEST_DIR/.claude/heads-up-cache/hucd.json" &
+HOME="$TEST_DIR" /tmp/hucd --config="$TEST_DIR/.config/hucd/config.json" &
 DAEMON_PID=$!
 
 # Wait for status file
