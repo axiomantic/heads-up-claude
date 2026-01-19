@@ -84,14 +84,32 @@ proc processTranscript*(transcriptPath: string, entry: var TranscriptEntry) =
 
 proc scanTranscripts*(projectsDir: string, cache: var TranscriptCache) =
   ## Scan all projects for transcript files and update cache
+  ## Optimized: skip directories that haven't been modified recently
 
   if not dirExists(projectsDir):
     log(DEBUG, "Projects directory not found: " & projectsDir)
     return
 
+  let now = getTime()
+  let thirtyDaysAgo = now - initDuration(days = 30)
+  var scannedDirs = 0
+  var skippedDirs = 0
+
   for projectKind, projectPath in walkDir(projectsDir):
     if projectKind != pcDir:
       continue
+
+    # Optimization: skip project directories not modified in 30+ days
+    # This avoids walking thousands of old session files
+    try:
+      let dirMtime = getFileInfo(projectPath).lastWriteTime
+      if dirMtime < thirtyDaysAgo:
+        skippedDirs += 1
+        continue
+    except:
+      continue
+
+    scannedDirs += 1
 
     for transcriptPath in walkFiles(projectPath / "*.jsonl"):
       try:
@@ -123,3 +141,6 @@ proc scanTranscripts*(projectsDir: string, cache: var TranscriptCache) =
           log(WARN, "Error reading " & transcriptPath & ": " & e.msg)
       except Exception as e:
         log(WARN, "Error processing " & transcriptPath & ": " & e.msg)
+
+  if skippedDirs > 0:
+    log(DEBUG, "Scanned " & $scannedDirs & " dirs, skipped " & $skippedDirs & " inactive (30+ days)")

@@ -219,12 +219,14 @@ proc runMainLoop*(state: var DaemonState) =
     for configDir in state.config.configDirs:
       let cacheDir = configDir / "heads-up-cache"
       let projectsDir = configDir / "projects"
+      var needsStatusUpdate = false
 
       # Transcript scan
       if shouldScan(state, configDir):
         log(DEBUG, "Scanning transcripts for " & configDir)
         scanTranscripts(projectsDir, state.transcriptCache)
         state.lastScan[configDir] = now
+        needsStatusUpdate = true
 
       # API fetch
       if shouldFetchApi(state, configDir):
@@ -250,10 +252,12 @@ proc runMainLoop*(state: var DaemonState) =
 
           state.apiStatus[configDir] = apiStatus
         state.lastApi[configDir] = now
+        needsStatusUpdate = true
 
-      # Write status
-      let status = buildStatus(state, configDir)
-      writeStatus(cacheDir, status)
+      # Only write status when something changed (avoids 10K+ iterations every 5s)
+      if needsStatusUpdate:
+        let status = buildStatus(state, configDir)
+        writeStatus(cacheDir, status)
 
     # Prune cache
     if shouldPrune(state):
