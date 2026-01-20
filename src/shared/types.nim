@@ -72,6 +72,7 @@ type
     version*: int
     lastPruned*: DateTime
     transcripts*: Table[string, TranscriptEntry]
+    dirMtimes*: Table[string, Time]  ## Last seen mtime per directory - skip if unchanged
 
 # ─────────────────────────────────────────────────────────────────
 # Daemon config types (hucd.json)

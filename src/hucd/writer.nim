@@ -30,7 +30,8 @@ proc loadTranscriptCache*(cacheDir: string): TranscriptCache =
   result = TranscriptCache(
     version: 1,
     lastPruned: now().utc(),
-    transcripts: initTable[string, TranscriptEntry]()
+    transcripts: initTable[string, TranscriptEntry](),
+    dirMtimes: initTable[string, Time]()
   )
 
   if not fileExists(cachePath):
@@ -40,6 +41,9 @@ proc loadTranscriptCache*(cacheDir: string): TranscriptCache =
   try:
     let content = readFile(cachePath)
     let j = parseJson(content)
+    if j.isNil:
+      log(WARN, "Failed to parse transcript cache")
+      return
 
     result.version = j.getOrDefault("version").getInt(1)
     let lastPrunedStr = j.getOrDefault("last_pruned").getStr("")
@@ -62,7 +66,14 @@ proc loadTranscriptCache*(cacheDir: string): TranscriptCache =
         te.incompleteLineBuffer = entry.getOrDefault("incomplete_line_buffer").getStr("")
         result.transcripts[path] = te
 
-    log(INFO, "Loaded transcript cache: " & $result.transcripts.len & " entries")
+    # Load directory mtimes (may not exist in old cache files)
+    if j.hasKey("dir_mtimes"):
+      let dirMtimes = j["dir_mtimes"]
+      if not dirMtimes.isNil and dirMtimes.kind == JObject:
+        for path, mtime in dirMtimes:
+          result.dirMtimes[path] = fromUnix(mtime.getInt(0))
+
+    log(INFO, "Loaded transcript cache: " & $result.transcripts.len & " entries, " & $result.dirMtimes.len & " dirs")
   except Exception as e:
     log(WARN, "Failed to load transcript cache: " & e.msg)
 
@@ -72,7 +83,8 @@ proc writeTranscriptCache*(cacheDir: string, cache: TranscriptCache) =
   var j = %*{
     "version": cache.version,
     "last_pruned": cache.lastPruned.format("yyyy-MM-dd'T'HH:mm:ss'Z'"),
-    "transcripts": newJObject()
+    "transcripts": newJObject(),
+    "dir_mtimes": newJObject()
   }
 
   for path, entry in cache.transcripts:
@@ -86,6 +98,9 @@ proc writeTranscriptCache*(cacheDir: string, cache: TranscriptCache) =
       "last_cache_read_tokens": entry.lastCacheReadTokens,
       "incomplete_line_buffer": entry.incompleteLineBuffer
     }
+
+  for path, mtime in cache.dirMtimes:
+    j["dir_mtimes"][path] = %mtime.toUnix()
 
   atomicWriteJson(cachePath, j)
   log(DEBUG, "Wrote transcript cache to " & cachePath)

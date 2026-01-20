@@ -84,7 +84,7 @@ proc processTranscript*(transcriptPath: string, entry: var TranscriptEntry) =
 
 proc scanTranscripts*(projectsDir: string, cache: var TranscriptCache) =
   ## Scan all projects for transcript files and update cache
-  ## Optimized: skip directories that haven't been modified recently
+  ## Optimized: skip directories whose mtime hasn't changed since last scan
 
   if not dirExists(projectsDir):
     log(DEBUG, "Projects directory not found: " & projectsDir)
@@ -94,53 +94,61 @@ proc scanTranscripts*(projectsDir: string, cache: var TranscriptCache) =
   let thirtyDaysAgo = now - initDuration(days = 30)
   var scannedDirs = 0
   var skippedDirs = 0
+  var unchangedDirs = 0
 
   for projectKind, projectPath in walkDir(projectsDir):
     if projectKind != pcDir:
       continue
 
-    # Optimization: skip project directories not modified in 30+ days
-    # This avoids walking thousands of old session files
     try:
       let dirMtime = getFileInfo(projectPath).lastWriteTime
+
+      # Skip directories not modified in 30+ days (cold storage optimization)
       if dirMtime < thirtyDaysAgo:
         skippedDirs += 1
         continue
+
+      # Skip directories whose mtime hasn't changed since last scan
+      # This is the key optimization - avoids walking files in unchanged dirs
+      if cache.dirMtimes.hasKey(projectPath):
+        if cache.dirMtimes[projectPath] == dirMtime:
+          unchangedDirs += 1
+          continue
+
+      # Directory changed or new - walk its files
+      scannedDirs += 1
+      cache.dirMtimes[projectPath] = dirMtime
+
+      for transcriptPath in walkFiles(projectPath / "*.jsonl"):
+        try:
+          let currentMtime = getFileInfo(transcriptPath).lastWriteTime
+
+          # Check if we have cached state
+          if cache.transcripts.hasKey(transcriptPath):
+            # Skip if mtime unchanged
+            if cache.transcripts[transcriptPath].mtime == currentMtime:
+              continue
+
+            # Process incrementally
+            var entry = cache.transcripts[transcriptPath]
+            processTranscript(transcriptPath, entry)
+            cache.transcripts[transcriptPath] = entry
+          else:
+            # New file - full process
+            var entry = TranscriptEntry()
+            processTranscript(transcriptPath, entry)
+            cache.transcripts[transcriptPath] = entry
+
+        except OSError as e:
+          if e.errorCode == 2:  # ENOENT - file deleted
+            cache.transcripts.del(transcriptPath)
+          else:
+            log(WARN, "Error reading " & transcriptPath & ": " & e.msg)
+        except Exception as e:
+          log(WARN, "Error processing " & transcriptPath & ": " & e.msg)
+
     except:
       continue
 
-    scannedDirs += 1
-
-    for transcriptPath in walkFiles(projectPath / "*.jsonl"):
-      try:
-        let currentMtime = getFileInfo(transcriptPath).lastWriteTime
-
-        # Check if we have cached state
-        if cache.transcripts.hasKey(transcriptPath):
-          var entry = cache.transcripts[transcriptPath]
-
-          # Skip if mtime unchanged
-          if entry.mtime == currentMtime:
-            entry.lastChecked = now().utc()
-            cache.transcripts[transcriptPath] = entry
-            continue
-
-          # Process incrementally
-          processTranscript(transcriptPath, entry)
-          cache.transcripts[transcriptPath] = entry
-        else:
-          # New file - full process
-          var entry = TranscriptEntry()
-          processTranscript(transcriptPath, entry)
-          cache.transcripts[transcriptPath] = entry
-
-      except OSError as e:
-        if e.errorCode == 2:  # ENOENT - file deleted
-          cache.transcripts.del(transcriptPath)
-        else:
-          log(WARN, "Error reading " & transcriptPath & ": " & e.msg)
-      except Exception as e:
-        log(WARN, "Error processing " & transcriptPath & ": " & e.msg)
-
-  if skippedDirs > 0:
-    log(DEBUG, "Scanned " & $scannedDirs & " dirs, skipped " & $skippedDirs & " inactive (30+ days)")
+  if skippedDirs > 0 or unchangedDirs > 0:
+    log(DEBUG, "Scanned " & $scannedDirs & " dirs, skipped " & $skippedDirs & " cold + " & $unchangedDirs & " unchanged")

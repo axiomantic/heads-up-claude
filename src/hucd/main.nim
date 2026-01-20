@@ -44,7 +44,8 @@ proc initDaemonState*(config: DaemonConfig): DaemonState =
   result.transcriptCache = TranscriptCache(
     version: 1,
     lastPruned: now().utc(),
-    transcripts: initTable[string, TranscriptEntry]()
+    transcripts: initTable[string, TranscriptEntry](),
+    dirMtimes: initTable[string, times.Time]()
   )
   result.lastScan = initTable[string, MonoTime]()
   result.lastApi = initTable[string, MonoTime]()
