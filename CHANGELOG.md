@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] - 2026-02-02
+
+### Fixed
+- **Stale transcript counts** - Fixed bug where daemon would miss file content changes because directory mtime optimization was skipping files whose content grew but directory didn't change. The daemon now uses a two-phase scan:
+  1. Walk directories to discover new files (still skips 30+ day cold directories)
+  2. Check all cached transcripts for file size changes to catch modifications
+- Token and message counts now update correctly as conversations progress
+
 ## [0.3.0] - 2026-01-16
 
 ### Changed (BREAKING)

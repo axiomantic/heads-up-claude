@@ -84,7 +84,9 @@ proc processTranscript*(transcriptPath: string, entry: var TranscriptEntry) =
 
 proc scanTranscripts*(projectsDir: string, cache: var TranscriptCache) =
   ## Scan all projects for transcript files and update cache
-  ## Optimized: skip directories whose mtime hasn't changed since last scan
+  ## Two-phase scan:
+  ## 1. Walk directories to find new files (skip cold directories)
+  ## 2. Check all cached transcripts for file size changes (catches modifications)
 
   if not dirExists(projectsDir):
     log(DEBUG, "Projects directory not found: " & projectsDir)
@@ -94,8 +96,9 @@ proc scanTranscripts*(projectsDir: string, cache: var TranscriptCache) =
   let thirtyDaysAgo = now - initDuration(days = 30)
   var scannedDirs = 0
   var skippedDirs = 0
-  var unchangedDirs = 0
+  var updatedFiles = 0
 
+  # Phase 1: Walk directories to discover new files
   for projectKind, projectPath in walkDir(projectsDir):
     if projectKind != pcDir:
       continue
@@ -108,47 +111,54 @@ proc scanTranscripts*(projectsDir: string, cache: var TranscriptCache) =
         skippedDirs += 1
         continue
 
-      # Skip directories whose mtime hasn't changed since last scan
-      # This is the key optimization - avoids walking files in unchanged dirs
-      if cache.dirMtimes.hasKey(projectPath):
-        if cache.dirMtimes[projectPath] == dirMtime:
-          unchangedDirs += 1
-          continue
-
-      # Directory changed or new - walk its files
+      # Always walk directories to find new files (removed broken dir mtime optimization)
       scannedDirs += 1
-      cache.dirMtimes[projectPath] = dirMtime
 
       for transcriptPath in walkFiles(projectPath / "*.jsonl"):
-        try:
-          let currentMtime = getFileInfo(transcriptPath).lastWriteTime
-
-          # Check if we have cached state
-          if cache.transcripts.hasKey(transcriptPath):
-            # Skip if mtime unchanged
-            if cache.transcripts[transcriptPath].mtime == currentMtime:
-              continue
-
-            # Process incrementally
-            var entry = cache.transcripts[transcriptPath]
-            processTranscript(transcriptPath, entry)
-            cache.transcripts[transcriptPath] = entry
-          else:
-            # New file - full process
+        if not cache.transcripts.hasKey(transcriptPath):
+          # New file - full process
+          try:
             var entry = TranscriptEntry()
             processTranscript(transcriptPath, entry)
             cache.transcripts[transcriptPath] = entry
-
-        except OSError as e:
-          if e.errorCode == 2:  # ENOENT - file deleted
-            cache.transcripts.del(transcriptPath)
-          else:
-            log(WARN, "Error reading " & transcriptPath & ": " & e.msg)
-        except Exception as e:
-          log(WARN, "Error processing " & transcriptPath & ": " & e.msg)
+            updatedFiles += 1
+          except OSError as e:
+            if e.errorCode != 2:  # Ignore ENOENT
+              log(WARN, "Error reading new file " & transcriptPath & ": " & e.msg)
+          except Exception as e:
+            log(WARN, "Error processing new file " & transcriptPath & ": " & e.msg)
 
     except:
       continue
 
-  if skippedDirs > 0 or unchangedDirs > 0:
-    log(DEBUG, "Scanned " & $scannedDirs & " dirs, skipped " & $skippedDirs & " cold + " & $unchangedDirs & " unchanged")
+  # Phase 2: Check all cached transcripts for modifications (by file size)
+  # This catches file content changes that don't affect directory mtime
+  var toDelete: seq[string] = @[]
+
+  for transcriptPath, entry in cache.transcripts.mpairs:
+    # Only check transcripts under this projectsDir
+    if not transcriptPath.startsWith(projectsDir):
+      continue
+
+    try:
+      let info = getFileInfo(transcriptPath)
+      let currentSize = info.size
+
+      # File grew - process new content incrementally
+      if currentSize > entry.size:
+        processTranscript(transcriptPath, entry)
+        updatedFiles += 1
+
+    except OSError as e:
+      if e.errorCode == 2:  # ENOENT - file deleted
+        toDelete.add(transcriptPath)
+      # Ignore other errors (file might be temporarily locked)
+    except:
+      discard
+
+  # Clean up deleted files
+  for path in toDelete:
+    cache.transcripts.del(path)
+
+  if skippedDirs > 0 or updatedFiles > 0:
+    log(DEBUG, "Scanned " & $scannedDirs & " dirs, skipped " & $skippedDirs & " cold, updated " & $updatedFiles & " files")
