@@ -1,29 +1,33 @@
 import unittest
-import std/[times, options, strutils]
+import std/strutils
 import ../src/huc/render
-import ../src/shared/types
 
 suite "Statusline Renderer":
-  test "renderWaiting produces expected output":
-    let output = renderWaiting("waiting for data")
-    check "waiting for data" in output
+  test "renderTag with color":
+    let output = renderTag("DEV", "\x1b[32m")
+    check "\x1b[32m" in output
+    check "DEV" in output
+    check " | " in output
 
-  test "renderUsageSection formats session data":
-    let output = renderUsageSection(45, "Pro", 22, "3h45m", 5.5, 40, 5, "5d12h", true)
-    check "22" in output
-    check "45" in output  # messages/limit
+  test "renderTag without color":
+    let output = renderTag("WORK", "")
+    check output == "WORK | "
 
-  test "renderContextSection formats tokens":
-    let output = renderContextSection(85000, 72000, 47)
-    check "85" in output  # 85K
-    check "47" in output  # percent
+  test "renderTag with empty tag":
+    check renderTag("", "green") == ""
 
-  test "renderWarning formats warning message":
-    let output = renderWarning("credentials expired")
-    check "credentials expired" in output
-    check "\x1b[33m" in output  # yellow
+  test "colorNameToAnsi maps standard colors":
+    check colorNameToAnsi("red") == "\x1b[31m"
+    check colorNameToAnsi("blue") == "\x1b[34m"
+    check colorNameToAnsi("cyan") == "\x1b[36m"
 
-  test "formatTokenCount handles large numbers":
-    check formatTokenCount(500) == "500"
-    check formatTokenCount(1500) == "1.5K"
-    check formatTokenCount(85000) == "85.0K"
+  test "colorNameToAnsi maps bright colors":
+    check colorNameToAnsi("bright-red") == "\x1b[91m"
+    check colorNameToAnsi("bright-cyan") == "\x1b[96m"
+
+  test "colorNameToAnsi returns empty for unknown":
+    check colorNameToAnsi("rainbow") == ""
+
+  test "colorNameToAnsi is case insensitive":
+    check colorNameToAnsi("RED") == "\x1b[31m"
+    check colorNameToAnsi("Blue") == "\x1b[34m"

@@ -14,4 +14,6 @@ suite "Statusline Entry":
     check exitCode == 0
     check "huc" in output
     check "statusline" in output.toLowerAscii()
+    check "--tag" in output
+    check "--install" in output
     removeFile("/tmp/test_huc")

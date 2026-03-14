@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-03-13
+
+### Changed (BREAKING)
+- **Simplified architecture**: Removed the background daemon (`hucd`) entirely. The statusline is now a single lightweight binary (`huc`) with no background process, no service files, no cache directories.
+- **Minimal statusline output**: Displays only `tag | project_dir | branch | plan | model` instead of token counts, rate limits, and weekly usage data.
+- Plan config (`heads_up_config.json`) now stores only the `plan` key (no more `five_hour_messages` or `weekly_hours_min`).
+
+### Added
+- **Git worktree detection**: When working in a git worktree, the statusline shows the worktree name: `main (wt: feature-branch)`.
+- `loadPlanName` reads plan display name directly from config (no daemon dependency).
+
+### Removed
+- **Daemon (`hucd`)**: Background process, launchd plist, systemd service, daemon config (`~/.config/hucd/`), daemon logs, status.json, transcript cache.
+- **Usage data display**: Token counts, cache read tokens, 5-hour rate limit, weekly usage tracking, context percentage.
+- **API credentials setup**: `--setup-api` flag and `runApiSetup` removed. No more session key or org ID configuration.
+- **Daemon management flags**: `--daemon-status`, `--daemon-restart`, `--daemon-logs` removed from `huc`.
+- **Status file reader**: `huc/reader.nim` and `huc/daemon.nim` modules removed.
+- All daemon-related rendering: `formatTokenCount`, `formatDuration`, `renderWaiting`, `renderWarning`, `renderError`, `renderContextSection`, `renderUsageSection`.
+- All daemon-related types: `ApiStatus`, `EstimateStatus`, `ContextStatus`, `PlanStatus`, `ErrorStatus`, `Status`, `TranscriptEntry`, `TranscriptCache`, `DaemonConfig`, `ApiCredentials`.
+
+### Migration
+- The updated `install.sh` automatically cleans up the running daemon (stops launchd/systemd service, removes plist/unit, kills processes, removes daemon binary and config).
+- The updated `uninstall.sh` still removes legacy daemon artifacts for users who skip the install step.
+
 ## [0.3.5] - 2026-02-02
 
 ### Fixed
@@ -100,6 +124,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Weekly reset time configuration (default: Wednesday 6pm Central)
 - Command-line options: `--plan`, `--reset-time`, `--no-emoji`, `--install`, `--help`
 
+[0.4.0]: https://github.com/axiomantic/heads-up-claude/releases/tag/v0.4.0
 [0.3.0]: https://github.com/axiomantic/heads-up-claude/releases/tag/v0.3.0
 [0.2.0]: https://github.com/axiomantic/heads-up-claude/releases/tag/v0.2.0
 [0.1.0]: https://github.com/axiomantic/heads-up-claude/releases/tag/v0.1.0

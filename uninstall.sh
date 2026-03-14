@@ -30,18 +30,17 @@ detect_claude_dirs() {
 }
 
 # ─────────────────────────────────────────────────────────────────
-# Binary and service files (same for all config dirs)
+# Binary files
 # ─────────────────────────────────────────────────────────────────
 HUC_BINARY="$HOME/.local/bin/huc"
-HUCD_BINARY="$HOME/.local/bin/hucd"
 SYMLINK_BINARY="$HOME/.local/bin/heads-up-claude"
+
+# Legacy files (daemon era)
+HUCD_BINARY="$HOME/.local/bin/hucd"
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/com.headsup.claude.plist"
 SYSTEMD_SERVICE="$HOME/.config/systemd/user/hucd.service"
 DAEMON_CONFIG_DIR="$HOME/.config/hucd"
 DAEMON_LOG_DIR="$HOME/.local/share/hucd"
-
-# Legacy files
-LEGACY_BINARY="$HOME/.local/bin/heads-up-claude"
 LEGACY_EXPECT="$HOME/.local/bin/get_usage.exp"
 LEGACY_CACHE="${TMPDIR:-/tmp}/heads-up-claude"
 
@@ -67,7 +66,7 @@ echo
 
 found_something=false
 
-echo "Binaries and services:"
+echo "Binaries:"
 if [ -f "$HUC_BINARY" ]; then
     echo "  [x] huc binary: $HUC_BINARY"
     found_something=true
@@ -75,6 +74,31 @@ else
     echo "  [ ] huc binary: (not found)"
 fi
 
+if [ -L "$SYMLINK_BINARY" ]; then
+    echo "  [x] Symlink: $SYMLINK_BINARY -> $(readlink "$SYMLINK_BINARY")"
+    found_something=true
+fi
+
+echo
+echo "Config directories:"
+for config_dir in "${CLAUDE_DIRS[@]}"; do
+    display_dir="${config_dir/#$HOME/\~}"
+
+    # Check for plan config
+    if [ -f "$config_dir/heads_up_config.json" ]; then
+        echo "  [x] $display_dir/heads_up_config.json"
+        found_something=true
+    fi
+
+    # Check for statusLine in settings.json
+    if [ -f "$config_dir/settings.json" ] && grep -q "statusLine" "$config_dir/settings.json" 2>/dev/null; then
+        echo "  [x] $display_dir/settings.json (contains statusLine)"
+        found_something=true
+    fi
+done
+
+echo
+echo "Legacy files (daemon era):"
 if [ -f "$HUCD_BINARY" ]; then
     echo "  [x] hucd binary: $HUCD_BINARY"
     found_something=true
@@ -82,18 +106,9 @@ else
     echo "  [ ] hucd binary: (not found)"
 fi
 
-if [ -L "$SYMLINK_BINARY" ]; then
-    echo "  [x] Symlink: $SYMLINK_BINARY -> $(readlink "$SYMLINK_BINARY")"
-    found_something=true
-fi
-
 if [ -f "$LAUNCHD_PLIST" ]; then
     echo "  [x] launchd plist: $LAUNCHD_PLIST"
     found_something=true
-    # Check if daemon is currently loaded
-    if launchctl list 2>/dev/null | grep -q "com.headsup.claude"; then
-        echo "      (daemon is running)"
-    fi
 else
     echo "  [ ] launchd plist: (not found)"
 fi
@@ -101,10 +116,6 @@ fi
 if [ -f "$SYSTEMD_SERVICE" ]; then
     echo "  [x] systemd service: $SYSTEMD_SERVICE"
     found_something=true
-    # Check if daemon is currently active
-    if systemctl --user is-active hucd >/dev/null 2>&1; then
-        echo "      (daemon is running)"
-    fi
 else
     echo "  [ ] systemd service: (not found)"
 fi
@@ -123,38 +134,13 @@ else
     echo "  [ ] Daemon logs: (not found)"
 fi
 
-echo
-echo "Config directories:"
 for config_dir in "${CLAUDE_DIRS[@]}"; do
     display_dir="${config_dir/#$HOME/\~}"
-
-    # Check for heads-up-cache
     if [ -d "$config_dir/heads-up-cache" ]; then
         echo "  [x] $display_dir/heads-up-cache/"
         found_something=true
     fi
-
-    # Check for legacy config
-    if [ -f "$config_dir/heads_up_config.json" ]; then
-        echo "  [x] $display_dir/heads_up_config.json"
-        found_something=true
-    fi
-
-    # Check for statusLine in settings.json
-    if [ -f "$config_dir/settings.json" ] && grep -q "statusLine" "$config_dir/settings.json" 2>/dev/null; then
-        echo "  [x] $display_dir/settings.json (contains statusLine)"
-        found_something=true
-    fi
 done
-
-echo
-echo "Legacy files:"
-if [ -f "$LEGACY_BINARY" ] && [ ! -L "$LEGACY_BINARY" ]; then
-    echo "  [x] Legacy binary: $LEGACY_BINARY"
-    found_something=true
-else
-    echo "  [ ] Legacy binary: (not found)"
-fi
 
 if [ -f "$LEGACY_EXPECT" ]; then
     echo "  [x] Expect script: $LEGACY_EXPECT"
@@ -190,29 +176,31 @@ echo
 echo "Removing files..."
 
 # ─────────────────────────────────────────────────────────────────
-# Stop daemon services first
+# Stop legacy daemon services first
 # ─────────────────────────────────────────────────────────────────
-echo "Stopping daemon services..."
+if [ -f "$LAUNCHD_PLIST" ] || [ -f "$SYSTEMD_SERVICE" ] || [ -f "$HUCD_BINARY" ]; then
+    echo "Stopping legacy daemon services..."
 
-if [ "$(uname)" = "Darwin" ]; then
-    if [ -f "$LAUNCHD_PLIST" ]; then
-        launchctl unload "$LAUNCHD_PLIST" 2>/dev/null && echo "  Stopped launchd service" || true
+    if [ "$(uname)" = "Darwin" ]; then
+        if [ -f "$LAUNCHD_PLIST" ]; then
+            launchctl unload "$LAUNCHD_PLIST" 2>/dev/null && echo "  Stopped launchd service" || true
+        fi
+    else
+        systemctl --user stop hucd 2>/dev/null && echo "  Stopped systemd service" || true
+        systemctl --user disable hucd 2>/dev/null || true
     fi
-else
-    systemctl --user stop hucd 2>/dev/null && echo "  Stopped systemd service" || true
-    systemctl --user disable hucd 2>/dev/null || true
+
+    pkill -f "hucd" 2>/dev/null && echo "  Killed orphaned hucd processes" || true
+    echo
 fi
 
-# Kill any orphaned daemon processes
-pkill -f "hucd" 2>/dev/null && echo "  Killed orphaned hucd processes" || true
-
-echo
-
 # ─────────────────────────────────────────────────────────────────
-# Remove binaries and services
+# Remove binaries
 # ─────────────────────────────────────────────────────────────────
 [ -L "$SYMLINK_BINARY" ] && rm -f "$SYMLINK_BINARY" && echo "  Removed symlink $SYMLINK_BINARY"
 [ -f "$HUC_BINARY" ] && rm -f "$HUC_BINARY" && echo "  Removed $HUC_BINARY"
+
+# Legacy daemon binaries and services
 [ -f "$HUCD_BINARY" ] && rm -f "$HUCD_BINARY" && echo "  Removed $HUCD_BINARY"
 [ -f "$LAUNCHD_PLIST" ] && rm -f "$LAUNCHD_PLIST" && echo "  Removed $LAUNCHD_PLIST"
 [ -f "$SYSTEMD_SERVICE" ] && rm -f "$SYSTEMD_SERVICE" && echo "  Removed $SYSTEMD_SERVICE"
@@ -229,13 +217,13 @@ fi
 for config_dir in "${CLAUDE_DIRS[@]}"; do
     display_dir="${config_dir/#$HOME/\~}"
 
-    # Remove cache directory
+    # Remove legacy cache directory
     if [ -d "$config_dir/heads-up-cache" ]; then
         rm -rf "$config_dir/heads-up-cache"
         echo "  Removed $display_dir/heads-up-cache/"
     fi
 
-    # Remove legacy config
+    # Remove plan config
     if [ -f "$config_dir/heads_up_config.json" ]; then
         rm -f "$config_dir/heads_up_config.json"
         echo "  Removed $display_dir/heads_up_config.json"
@@ -254,7 +242,7 @@ for config_dir in "${CLAUDE_DIRS[@]}"; do
 done
 
 # ─────────────────────────────────────────────────────────────────
-# Remove central daemon config directory
+# Remove central daemon config directory (legacy)
 # ─────────────────────────────────────────────────────────────────
 if [ -d "$DAEMON_CONFIG_DIR" ]; then
     rm -rf "$DAEMON_CONFIG_DIR"
@@ -264,7 +252,6 @@ fi
 # ─────────────────────────────────────────────────────────────────
 # Remove legacy files
 # ─────────────────────────────────────────────────────────────────
-[ -f "$LEGACY_BINARY" ] && [ ! -L "$LEGACY_BINARY" ] && rm -f "$LEGACY_BINARY" && echo "  Removed legacy $LEGACY_BINARY"
 [ -f "$LEGACY_EXPECT" ] && rm -f "$LEGACY_EXPECT" && echo "  Removed $LEGACY_EXPECT"
 [ -d "$LEGACY_CACHE" ] && rm -rf "$LEGACY_CACHE" && echo "  Removed $LEGACY_CACHE"
 

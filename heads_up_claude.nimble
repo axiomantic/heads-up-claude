@@ -1,11 +1,11 @@
 # Package
 
-version       = "0.3.5"
+version       = "0.4.0"
 author        = "Axiomantic"
-description   = "A statusline for Claude Code showing token usage, rate limits, and weekly metrics"
+description   = "A minimal statusline for Claude Code showing project, branch, plan, and model"
 license       = "MIT"
 srcDir        = "src"
-bin           = @["huc", "hucd"]
+bin           = @["huc"]
 binDir        = "bin"
 
 # Dependencies
@@ -16,30 +16,22 @@ requires "nim >= 2.0.0"
 
 task install, "Install the program to ~/.local/bin":
   exec "nim c -d:release --hints:off --warnings:off -o:bin/huc src/huc.nim"
-  exec "nim c -d:release --hints:off --warnings:off -o:bin/hucd src/hucd.nim"
   when defined(windows):
     exec "copy bin\\huc.exe \"%LOCALAPPDATA%\\Programs\\huc.exe\""
-    exec "copy bin\\hucd.exe \"%LOCALAPPDATA%\\Programs\\hucd.exe\""
   else:
     exec "mkdir -p ~/.local/bin"
     exec "cp bin/huc ~/.local/bin/huc"
-    exec "cp bin/hucd ~/.local/bin/hucd"
     exec "chmod +x ~/.local/bin/huc"
-    exec "chmod +x ~/.local/bin/hucd"
     exec "ln -sf ~/.local/bin/huc ~/.local/bin/heads-up-claude"
   echo "Installed to ~/.local/bin/"
-  echo ""
-  echo "Next: Run ./install.sh to configure the daemon service"
 
-task build, "Build release binaries":
+task build, "Build release binary":
   exec "nim c -d:release --hints:off --warnings:off -o:bin/huc src/huc.nim"
-  exec "nim c -d:release --hints:off --warnings:off -o:bin/hucd src/hucd.nim"
-  echo "Built bin/huc and bin/hucd"
+  echo "Built bin/huc"
 
-task dev, "Build debug binaries":
+task dev, "Build debug binary":
   exec "nim c --hints:off -o:bin/huc src/huc.nim"
-  exec "nim c --hints:off -o:bin/hucd src/hucd.nim"
-  echo "Built bin/huc and bin/hucd (debug)"
+  echo "Built bin/huc (debug)"
 
 task test, "Run test suite":
   exec "nim c -r tests/test_all.nim"
