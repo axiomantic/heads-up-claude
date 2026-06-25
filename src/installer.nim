@@ -76,7 +76,7 @@ proc showHelp*() =
   echo "Heads Up Claude"
   echo "==============="
   echo ""
-  echo "A minimal statusline for Claude Code showing project, branch, plan, and model."
+  echo "A minimal statusline for Claude Code showing project, branch, and model."
   echo ""
   echo "Usage:"
   echo "  heads-up-claude [OPTIONS]"
@@ -113,9 +113,11 @@ proc showHelp*() =
   echo ""
   echo "For more information, see https://github.com/axiomantic/heads-up-claude"
 
-proc savePlanConfig(claudeConfigDir: string, plan: string) =
+proc saveConfig(claudeConfigDir: string, projectsDir: string) =
   let configPath = claudeConfigDir / "heads_up_config.json"
-  let config = %* {"plan": plan}
+  var config = newJObject()
+  if projectsDir.len > 0:
+    config["projects_dir"] = %projectsDir
   writeFile(configPath, config.pretty())
 
 proc runInstall*(projectsDir: string, claudeConfigDir: string, tag: string = "", tagColor: string = "") =
@@ -155,32 +157,19 @@ proc runInstall*(projectsDir: string, claudeConfigDir: string, tag: string = "",
     except:
       discard
 
-  echo ""
-  echo "Configure your Claude plan"
-  echo "=========================="
-  echo ""
-  echo "Select your Claude plan:"
-  echo "  1) Free"
-  echo "  2) Pro ($20/month) - 45 messages per 5 hours"
-  echo "  3) Max 5× ($100/month) - 225 messages per 5 hours"
-  echo "  4) Max 20× ($200/month) - 900 messages per 5 hours"
-  echo ""
-  stdout.write("Enter choice [1-4] (default: 2): ")
-  stdout.flushFile()
+  # Auto-detect projects directory from HOME
+  let home = getEnv("HOME")
+  let defaultProjectsDir = home / "Development"
+  var projectsDir = ""
+  if dirExists(defaultProjectsDir):
+    projectsDir = defaultProjectsDir
 
-  let planResponse = stdin.readLine().strip()
-  var planType: string
+  saveConfig(claudeConfigDir, projectsDir)
 
-  case planResponse:
-  of "1": planType = "free"
-  of "3": planType = "max5"
-  of "4": planType = "max20"
-  else: planType = "pro"
-
-  echo ""
-  echo "Plan configured: ", planType
-
-  savePlanConfig(claudeConfigDir, planType)
+  if projectsDir.len > 0:
+    echo ""
+    echo "Projects directory: ", projectsDir
+    echo "  (paths under this directory will show just the project name)"
 
   echo ""
   echo "Configure tag prefix (optional)"

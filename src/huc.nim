@@ -93,6 +93,8 @@ proc main() =
     output.add(renderTag(tag, tc))
 
   # Project dir and branch from stdin
+  let projectsDir = loadProjectsDir(claudeConfigDir)
+
   if inputJson != nil:
     let workspace = inputJson.getOrDefault("workspace")
     if workspace.kind == JObject:
@@ -100,10 +102,16 @@ proc main() =
       if projectDirNode.kind == JString:
         let home = getEnv("HOME")
         let projectDir = projectDirNode.getStr()
-        let displayProjectDir = if projectDir.startsWith(home):
-          "~" & projectDir[home.len..^1]
+        var displayProjectDir: string
+        if projectsDir.len > 0 and projectDir.startsWith(projectsDir):
+          # Strip projects dir prefix, show just the project name
+          displayProjectDir = projectDir[projectsDir.len..^1]
+          if displayProjectDir.startsWith("/"):
+            displayProjectDir = displayProjectDir[1..^1]
+        elif projectDir.startsWith(home):
+          displayProjectDir = "~" & projectDir[home.len..^1]
         else:
-          projectDir
+          displayProjectDir = projectDir
 
         output.add("\x1b[34m" & displayProjectDir & "\x1b[0m")
 
@@ -135,11 +143,6 @@ proc main() =
               output.add(" | " & branchDisplay)
         except:
           discard
-
-  # Plan name from config
-  let planName = loadPlanName(claudeConfigDir)
-  if planName.len > 0:
-    output.add(" | \x1b[35m" & planName & "\x1b[0m")
 
   # Model from stdin
   if inputJson != nil and inputJson.hasKey("model"):
